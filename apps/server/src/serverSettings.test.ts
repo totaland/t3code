@@ -115,6 +115,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "/Users/julius/.codex",
         shadowHomePath: "",
         customModels: [],
+        mcpServers: {},
       });
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
@@ -356,6 +357,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "",
         shadowHomePath: "",
         customModels: [],
+        mcpServers: {},
       });
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
@@ -390,6 +392,45 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(next.observability, {
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("normalizes Codex MCP server settings when updates are applied", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: {
+            mcpServers: {
+              codeIntel: {
+                command: "  uv  ",
+                args: ["  run  ", "--no-sync", "code-intel", "--root", "  ${cwd}  ", "serve"],
+                cwd: "  /tmp/code-intel  ",
+                env: {
+                  CODE_INTEL_ROOT: "  {workspaceRoot}  ",
+                },
+                startupTimeoutMs: 20_000,
+                supportsParallelToolCalls: true,
+                defaultToolsApprovalMode: "prompt",
+              },
+            },
+          },
+        },
+      });
+
+      assert.deepEqual(next.providers.codex.mcpServers.codeIntel, {
+        enabled: true,
+        command: "uv",
+        args: ["run", "--no-sync", "code-intel", "--root", "${cwd}", "serve"],
+        cwd: "/tmp/code-intel",
+        env: {
+          CODE_INTEL_ROOT: "{workspaceRoot}",
+        },
+        startupTimeoutMs: 20_000,
+        supportsParallelToolCalls: true,
+        defaultToolsApprovalMode: "prompt",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );

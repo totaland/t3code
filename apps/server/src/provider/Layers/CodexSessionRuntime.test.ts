@@ -11,6 +11,7 @@ import {
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
 import {
+  buildCodexMcpSessionConfig,
   buildTurnStartParams,
   isRecoverableThreadResumeError,
   openCodexThread,
@@ -144,6 +145,109 @@ describe("buildTurnStartParams", () => {
         },
       ],
     });
+  });
+});
+
+describe("buildCodexMcpSessionConfig", () => {
+  it("renders enabled MCP servers with per-session cwd placeholders", () => {
+    assert.deepStrictEqual(
+      buildCodexMcpSessionConfig({
+        cwd: "/repo/workspace",
+        mcpServers: {
+          axonMemory: {
+            enabled: true,
+            command: "uv",
+            args: [
+              "run",
+              "--project",
+              "/Users/james/git/mcp/cool-shit/coding-ai/memory/agent-new",
+              "--no-sync",
+              "python",
+              "examples/serve_memory_mcp.py",
+            ],
+            cwd: "/Users/james/git/mcp/cool-shit/coding-ai/memory/agent-new",
+            env: {},
+            supportsParallelToolCalls: false,
+          },
+          codeIntel: {
+            enabled: true,
+            command: "uv",
+            args: [
+              "run",
+              "--project",
+              "/Users/james/git/mcp/cool-shit/coding-ai/code-graph-rag/code-intel/code-intel",
+              "--no-sync",
+              "code-intel",
+              "--root",
+              "${cwd}",
+              "serve",
+            ],
+            cwd: "",
+            env: {
+              CODE_INTEL_ROOT: "{workspaceRoot}",
+            },
+            startupTimeoutMs: 20_000,
+            supportsParallelToolCalls: true,
+            defaultToolsApprovalMode: "prompt",
+          },
+          disabledServer: {
+            enabled: false,
+            command: "ignored",
+            args: [],
+            cwd: "",
+            env: {},
+            supportsParallelToolCalls: false,
+          },
+        },
+      }),
+      {
+        mcp_servers: {
+          axonMemory: {
+            type: "stdio",
+            command: "uv",
+            args: [
+              "run",
+              "--project",
+              "/Users/james/git/mcp/cool-shit/coding-ai/memory/agent-new",
+              "--no-sync",
+              "python",
+              "examples/serve_memory_mcp.py",
+            ],
+            cwd: "/Users/james/git/mcp/cool-shit/coding-ai/memory/agent-new",
+          },
+          codeIntel: {
+            type: "stdio",
+            command: "uv",
+            args: [
+              "run",
+              "--project",
+              "/Users/james/git/mcp/cool-shit/coding-ai/code-graph-rag/code-intel/code-intel",
+              "--no-sync",
+              "code-intel",
+              "--root",
+              "/repo/workspace",
+              "serve",
+            ],
+            env: {
+              CODE_INTEL_ROOT: "/repo/workspace",
+            },
+            startup_timeout_ms: 20_000,
+            supports_parallel_tool_calls: true,
+            default_tools_approval_mode: "prompt",
+          },
+        },
+      },
+    );
+  });
+
+  it("omits config when no MCP servers are enabled", () => {
+    assert.equal(
+      buildCodexMcpSessionConfig({
+        cwd: "/repo/workspace",
+        mcpServers: {},
+      }),
+      undefined,
+    );
   });
 });
 

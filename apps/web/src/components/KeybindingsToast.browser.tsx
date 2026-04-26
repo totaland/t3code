@@ -109,6 +109,7 @@ function createBaseServerConfig(): ServerConfig {
           homePath: "",
           shadowHomePath: "",
           customModels: [],
+          mcpServers: {},
         },
         claudeAgent: {
           enabled: true,

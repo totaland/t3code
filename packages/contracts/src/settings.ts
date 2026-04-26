@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
@@ -96,12 +96,32 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
+export const CodexMcpToolApprovalMode = Schema.Literals(["auto", "prompt", "approve"]);
+export type CodexMcpToolApprovalMode = typeof CodexMcpToolApprovalMode.Type;
+
+export const CodexMcpServerSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  command: TrimmedNonEmptyString,
+  args: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  cwd: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  env: Schema.Record(TrimmedNonEmptyString, TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  startupTimeoutMs: Schema.optionalKey(NonNegativeInt),
+  supportsParallelToolCalls: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  defaultToolsApprovalMode: Schema.optionalKey(CodexMcpToolApprovalMode),
+});
+export type CodexMcpServerSettings = typeof CodexMcpServerSettings.Type;
+
 export const CodexSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   binaryPath: makeBinaryPathSetting("codex"),
   homePath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   shadowHomePath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  mcpServers: Schema.Record(TrimmedNonEmptyString, CodexMcpServerSettings).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type CodexSettings = typeof CodexSettings.Type;
 
@@ -212,6 +232,21 @@ const CodexSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(Schema.String),
   shadowHomePath: Schema.optionalKey(Schema.String),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  mcpServers: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        enabled: Schema.optionalKey(Schema.Boolean),
+        command: Schema.optionalKey(Schema.String),
+        args: Schema.optionalKey(Schema.Array(Schema.String)),
+        cwd: Schema.optionalKey(Schema.String),
+        env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        startupTimeoutMs: Schema.optionalKey(Schema.Number),
+        supportsParallelToolCalls: Schema.optionalKey(Schema.Boolean),
+        defaultToolsApprovalMode: Schema.optionalKey(CodexMcpToolApprovalMode),
+      }),
+    ),
+  ),
 });
 
 const ClaudeSettingsPatch = Schema.Struct({

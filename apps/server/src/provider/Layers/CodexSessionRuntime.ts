@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type CodexMcpServerSettings,
   DEFAULT_MODEL,
   EventId,
   ProviderDriverKind,
@@ -84,6 +85,7 @@ export interface CodexSessionRuntimeOptions {
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
   readonly serviceTier?: EffectCodexSchema.V2ThreadStartParams__ServiceTier | undefined;
+  readonly mcpServers?: Readonly<Record<string, CodexMcpServerSettings>>;
   readonly resumeCursor?: CodexResumeCursor;
 }
 
@@ -264,17 +266,82 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
+function interpolateCodexMcpTemplate(value: string, input: { readonly cwd: string }): string {
+  return value
+    .replaceAll("${cwd}", input.cwd)
+    .replaceAll("{cwd}", input.cwd)
+    .replaceAll("${workspaceRoot}", input.cwd)
+    .replaceAll("{workspaceRoot}", input.cwd);
+}
+
+export function buildCodexMcpSessionConfig(input: {
+  readonly cwd: string;
+  readonly mcpServers?: Readonly<Record<string, CodexMcpServerSettings>>;
+}): Record<string, unknown> | undefined {
+  const enabledServers = Object.entries(input.mcpServers ?? {}).filter(
+    ([, server]) => server.enabled,
+  );
+  if (enabledServers.length === 0) {
+    return undefined;
+  }
+
+  const mcpServers: Record<string, unknown> = {};
+  for (const [name, server] of enabledServers) {
+    const serverConfig: Record<string, unknown> = {
+      type: "stdio",
+      command: interpolateCodexMcpTemplate(server.command, input),
+    };
+
+    if (server.args.length > 0) {
+      serverConfig.args = server.args.map((arg) => interpolateCodexMcpTemplate(arg, input));
+    }
+
+    if (server.cwd.length > 0) {
+      serverConfig.cwd = interpolateCodexMcpTemplate(server.cwd, input);
+    }
+
+    const envEntries = Object.entries(server.env);
+    if (envEntries.length > 0) {
+      serverConfig.env = Object.fromEntries(
+        envEntries.map(([key, value]) => [key, interpolateCodexMcpTemplate(value, input)]),
+      );
+    }
+
+    if (server.startupTimeoutMs !== undefined) {
+      serverConfig.startup_timeout_ms = server.startupTimeoutMs;
+    }
+
+    if (server.supportsParallelToolCalls) {
+      serverConfig.supports_parallel_tool_calls = true;
+    }
+
+    if (server.defaultToolsApprovalMode !== undefined) {
+      serverConfig.default_tools_approval_mode = server.defaultToolsApprovalMode;
+    }
+
+    mcpServers[name] = serverConfig;
+  }
+
+  return { mcp_servers: mcpServers };
+}
+
 function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: EffectCodexSchema.V2ThreadStartParams__ServiceTier | undefined;
+  readonly mcpServers?: Readonly<Record<string, CodexMcpServerSettings>>;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const mcpConfig = buildCodexMcpSessionConfig({
+    cwd: input.cwd,
+    ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
+  });
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
+    ...(mcpConfig ? { config: mcpConfig } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
@@ -418,6 +485,7 @@ export const openCodexThread = (input: {
   readonly cwd: string;
   readonly requestedModel: string | undefined;
   readonly serviceTier: EffectCodexSchema.V2ThreadStartParams__ServiceTier | undefined;
+  readonly mcpServers?: Readonly<Record<string, CodexMcpServerSettings>>;
   readonly resumeThreadId: string | undefined;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
@@ -426,6 +494,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -1166,6 +1235,7 @@ export const makeCodexSessionRuntime = (
         cwd: options.cwd,
         requestedModel,
         serviceTier: options.serviceTier,
+        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
       });
 
