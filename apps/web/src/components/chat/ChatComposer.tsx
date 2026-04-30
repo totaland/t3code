@@ -92,6 +92,8 @@ import {
   type LucideIcon,
   LockIcon,
   LockOpenIcon,
+  MicIcon,
+  MicOffIcon,
   PenLineIcon,
   XIcon,
 } from "lucide-react";
@@ -138,6 +140,18 @@ const runtimeModeConfig: Record<
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
+
+export function appendVoiceTranscript(basePrompt: string, transcript: string): string {
+  const normalizedTranscript = transcript.trim();
+  if (normalizedTranscript.length === 0) {
+    return basePrompt;
+  }
+
+  const normalizedBase = basePrompt.trimEnd();
+  return normalizedBase.length > 0
+    ? `${normalizedBase}\n\n${normalizedTranscript}`
+    : normalizedTranscript;
+}
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,
@@ -1031,6 +1045,339 @@ export const ChatComposer = memo(
       },
       [composerDraftTarget, setComposerDraftPrompt],
     );
+
+    const voiceRecorderRef = useRef<{
+      autoSubmit: boolean;
+      chunks: Blob[];
+      recorder: MediaRecorder;
+      stream: MediaStream;
+    } | null>(null);
+    const voiceBasePromptRef = useRef("");
+    const [isVoiceListening, setIsVoiceListening] = useState(false);
+    const [isVoiceSupported, setIsVoiceSupported] = useState(false);
+
+    useEffect(() => {
+      setIsVoiceSupported(
+        Boolean(
+          window.desktopBridge?.transcribePushToTalkAudio &&
+          typeof navigator.mediaDevices?.getUserMedia === "function" &&
+          typeof MediaRecorder !== "undefined",
+        ),
+      );
+    }, []);
+
+    useEffect(
+      () => () => {
+        const activeRecorder = voiceRecorderRef.current;
+        voiceRecorderRef.current = null;
+        activeRecorder?.stream.getTracks().forEach((track) => track.stop());
+        if (activeRecorder?.recorder.state === "recording") {
+          activeRecorder.recorder.stop();
+        }
+      },
+      [],
+    );
+
+    const applyVoiceTranscriptToPrompt = useCallback(
+      (transcript: string) => {
+        const nextPrompt = appendVoiceTranscript(voiceBasePromptRef.current, transcript);
+        promptRef.current = nextPrompt;
+        setPrompt(nextPrompt);
+        const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
+        setComposerCursor(nextCursor);
+        setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+      },
+      [promptRef, setPrompt],
+    );
+
+    const setDesktopVoiceOverlay = useCallback(
+      (state: {
+        visible: boolean;
+        status: "idle" | "listening" | "processing" | "error";
+        title: string;
+        message?: string;
+      }) => {
+        void window.desktopBridge?.setPushToTalkOverlayState(state).catch(() => undefined);
+      },
+      [],
+    );
+
+    const showDesktopVoiceIdleOverlay = useCallback(() => {
+      setDesktopVoiceOverlay({
+        visible: true,
+        status: "idle",
+        title: "T3 Code",
+        message: "Hold Ctrl+Option",
+      });
+    }, [setDesktopVoiceOverlay]);
+
+    const stopVoiceListening = useCallback(() => {
+      const activeRecorder = voiceRecorderRef.current;
+      if (!activeRecorder || activeRecorder.recorder.state === "inactive") {
+        return;
+      }
+      activeRecorder.recorder.stop();
+    }, []);
+
+    const startVoiceListening = useCallback(
+      async (options: { autoSubmit: boolean }) => {
+        if (voiceRecorderRef.current || isVoiceListening) {
+          if (voiceRecorderRef.current) {
+            voiceRecorderRef.current.autoSubmit =
+              voiceRecorderRef.current.autoSubmit || options.autoSubmit;
+          }
+          return;
+        }
+
+        if (
+          !window.desktopBridge?.transcribePushToTalkAudio ||
+          typeof navigator.mediaDevices?.getUserMedia !== "function" ||
+          typeof MediaRecorder === "undefined"
+        ) {
+          toastManager.add({
+            type: "error",
+            title: "Voice input unavailable",
+            description: "Local voice capture is unavailable in this runtime.",
+          });
+          setDesktopVoiceOverlay({
+            visible: true,
+            status: "error",
+            title: "Voice input unavailable",
+            message: "Local voice capture is unavailable.",
+          });
+          window.setTimeout(() => {
+            showDesktopVoiceIdleOverlay();
+          }, 1600);
+          return;
+        }
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+            ? "audio/webm;codecs=opus"
+            : MediaRecorder.isTypeSupported("audio/webm")
+              ? "audio/webm"
+              : "";
+          const chunks: Blob[] = [];
+          const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+          voiceBasePromptRef.current = promptRef.current;
+          voiceRecorderRef.current = {
+            autoSubmit: options.autoSubmit,
+            chunks,
+            recorder,
+            stream,
+          };
+
+          recorder.addEventListener("dataavailable", (event) => {
+            if (event.data.size > 0) {
+              chunks.push(event.data);
+            }
+          });
+          recorder.addEventListener("start", () => {
+            setIsVoiceListening(true);
+            setDesktopVoiceOverlay({
+              visible: true,
+              status: "listening",
+              title: "Listening",
+              message: options.autoSubmit ? "Release to send" : "Speak your command",
+            });
+          });
+          recorder.addEventListener("error", () => {
+            setIsVoiceListening(false);
+            voiceRecorderRef.current = null;
+            stream.getTracks().forEach((track) => track.stop());
+            toastManager.add({
+              type: "error",
+              title: "Voice input stopped",
+              description: "Local audio recording failed.",
+            });
+            setDesktopVoiceOverlay({
+              visible: true,
+              status: "error",
+              title: "Voice input stopped",
+              message: "Local audio recording failed.",
+            });
+            window.setTimeout(() => {
+              showDesktopVoiceIdleOverlay();
+            }, 1600);
+          });
+          recorder.addEventListener("stop", () => {
+            const stoppedRecorder = voiceRecorderRef.current;
+            voiceRecorderRef.current = null;
+            setIsVoiceListening(false);
+            stream.getTracks().forEach((track) => track.stop());
+
+            void (async () => {
+              const audioBlob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+              if (!stoppedRecorder || audioBlob.size === 0) {
+                showDesktopVoiceIdleOverlay();
+                return;
+              }
+
+              setDesktopVoiceOverlay({
+                visible: true,
+                status: "processing",
+                title: "Transcribing locally",
+                message: "Using local STT",
+              });
+
+              const result = await window.desktopBridge?.transcribePushToTalkAudio({
+                audio: await audioBlob.arrayBuffer(),
+                mimeType: audioBlob.type || "audio/webm",
+              });
+              if (!result?.ok) {
+                const message = result?.error ?? "Local transcription failed.";
+                toastManager.add({
+                  type: "error",
+                  title: "Voice input stopped",
+                  description: message,
+                });
+                setDesktopVoiceOverlay({
+                  visible: true,
+                  status: "error",
+                  title: "Voice input stopped",
+                  message,
+                });
+                window.setTimeout(() => {
+                  showDesktopVoiceIdleOverlay();
+                }, 2200);
+                return;
+              }
+
+              const transcript = result.text.trim();
+              if (transcript.length === 0) {
+                showDesktopVoiceIdleOverlay();
+                return;
+              }
+
+              applyVoiceTranscriptToPrompt(transcript);
+              scheduleComposerFocus();
+              if (stoppedRecorder.autoSubmit) {
+                setDesktopVoiceOverlay({
+                  visible: true,
+                  status: "processing",
+                  title: "Sending voice command",
+                  message: "Starting agent session",
+                });
+                window.setTimeout(() => {
+                  void onSend();
+                  window.setTimeout(() => {
+                    showDesktopVoiceIdleOverlay();
+                  }, 900);
+                }, 0);
+              } else {
+                showDesktopVoiceIdleOverlay();
+              }
+            })();
+          });
+          recorder.start();
+        } catch (error) {
+          voiceRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+          voiceRecorderRef.current = null;
+          setIsVoiceListening(false);
+          toastManager.add({
+            type: "error",
+            title: "Unable to start voice input",
+            description: error instanceof Error ? error.message : "Local audio capture failed.",
+          });
+          setDesktopVoiceOverlay({
+            visible: true,
+            status: "error",
+            title: "Unable to start voice input",
+            message: error instanceof Error ? error.message : "Local audio capture failed.",
+          });
+        }
+      },
+      [
+        applyVoiceTranscriptToPrompt,
+        isVoiceListening,
+        onSend,
+        promptRef,
+        scheduleComposerFocus,
+        setDesktopVoiceOverlay,
+        showDesktopVoiceIdleOverlay,
+      ],
+    );
+
+    const toggleVoiceListening = useCallback(() => {
+      if (isVoiceListening) {
+        stopVoiceListening();
+        return;
+      }
+
+      startVoiceListening({ autoSubmit: true });
+    }, [isVoiceListening, startVoiceListening, stopVoiceListening]);
+
+    useEffect(() => {
+      const unsubscribe = window.desktopBridge?.onPushToTalkEvent((event) => {
+        if (event.type === "start") {
+          startVoiceListening({ autoSubmit: true });
+        } else {
+          stopVoiceListening();
+        }
+      });
+      return () => {
+        unsubscribe?.();
+      };
+    }, [startVoiceListening, stopVoiceListening]);
+
+    useEffect(() => {
+      if (window.sessionStorage.getItem("t3code:voice-autostart") !== "1") {
+        return;
+      }
+
+      window.sessionStorage.removeItem("t3code:voice-autostart");
+      window.setTimeout(() => {
+        startVoiceListening({ autoSubmit: true });
+      }, 0);
+    }, [startVoiceListening]);
+
+    useEffect(() => {
+      if (!window.desktopBridge) {
+        return;
+      }
+
+      const shouldHandleEvent = (event: KeyboardEvent) =>
+        event.ctrlKey &&
+        event.altKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        (event.code === "ControlLeft" ||
+          event.code === "ControlRight" ||
+          event.code === "AltLeft" ||
+          event.code === "AltRight");
+
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.repeat || !shouldHandleEvent(event)) {
+          return;
+        }
+        event.preventDefault();
+        startVoiceListening({ autoSubmit: true });
+      };
+      const onKeyUp = (event: KeyboardEvent) => {
+        if (
+          event.code !== "ControlLeft" &&
+          event.code !== "ControlRight" &&
+          event.code !== "AltLeft" &&
+          event.code !== "AltRight"
+        ) {
+          return;
+        }
+        stopVoiceListening();
+      };
+      const onBlur = () => {
+        stopVoiceListening();
+      };
+
+      window.addEventListener("keydown", onKeyDown);
+      window.addEventListener("keyup", onKeyUp);
+      window.addEventListener("blur", onBlur);
+      return () => {
+        window.removeEventListener("keydown", onKeyDown);
+        window.removeEventListener("keyup", onKeyUp);
+        window.removeEventListener("blur", onBlur);
+      };
+    }, [startVoiceListening, stopVoiceListening]);
 
     const addComposerImage = useCallback(
       (image: ComposerImageAttachment) => {
@@ -2069,6 +2416,37 @@ export const ChatComposer = memo(
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant={isVoiceListening ? "default" : "outline"}
+                          className={cn(
+                            "h-9 w-9 rounded-full sm:h-8 sm:w-8",
+                            isVoiceListening ? "animate-pulse" : "",
+                          )}
+                          disabled={!isVoiceSupported || isSendBusy || isConnecting}
+                          aria-label={
+                            isVoiceListening ? "Stop voice command" : "Start voice command"
+                          }
+                          onClick={toggleVoiceListening}
+                        />
+                      }
+                    >
+                      {isVoiceListening ? (
+                        <MicOffIcon className="size-4" />
+                      ) : (
+                        <MicIcon className="size-4" />
+                      )}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">
+                      {isVoiceSupported
+                        ? "Hold Ctrl+Option to speak. Ctrl+Option+Space works globally."
+                        : "Voice input is unavailable in this runtime."}
+                    </TooltipPopup>
+                  </Tooltip>
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}

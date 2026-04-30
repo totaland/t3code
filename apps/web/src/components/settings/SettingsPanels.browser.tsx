@@ -328,6 +328,9 @@ const createDesktopBridgeStub = (overrides?: {
       .fn()
       .mockResolvedValue({ accepted: false, completed: false, state: idleUpdateState }),
     onUpdateState: () => () => {},
+    onPushToTalkEvent: () => () => {},
+    setPushToTalkOverlayState: vi.fn().mockResolvedValue(undefined),
+    transcribePushToTalkAudio: vi.fn().mockResolvedValue({ ok: true, text: "" }),
   };
 };
 

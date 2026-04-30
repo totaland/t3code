@@ -10,12 +10,14 @@ import {
   type BrowserWindowConstructorOptions,
   clipboard,
   dialog,
+  globalShortcut,
   ipcMain,
   Menu,
   nativeImage,
   nativeTheme,
   protocol,
   safeStorage,
+  screen,
   shell,
 } from "electron";
 import type { MenuItemConstructorOptions, OpenDialogOptions } from "electron";
@@ -30,6 +32,9 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
+  DesktopPushToTalkOverlayState,
+  DesktopPushToTalkTranscriptionInput,
+  DesktopPushToTalkTranscriptionResult,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
@@ -102,6 +107,9 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const PUSH_TO_TALK_EVENT_CHANNEL = "desktop:push-to-talk-event";
+const PUSH_TO_TALK_OVERLAY_STATE_CHANNEL = "desktop:push-to-talk-overlay-state";
+const PUSH_TO_TALK_TRANSCRIBE_CHANNEL = "desktop:push-to-talk-transcribe";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -129,6 +137,14 @@ const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const PUSH_TO_TALK_GLOBAL_SHORTCUT = "Control+Alt+Space";
+const PUSH_TO_TALK_OVERLAY_WIDTH = 248;
+const PUSH_TO_TALK_OVERLAY_HEIGHT = 76;
+const PUSH_TO_TALK_OVERLAY_CURSOR_OFFSET = 18;
+const PUSH_TO_TALK_NATIVE_HELPER_NAME = "t3code-push-to-talk-helper";
+const LOCAL_STT_MODEL_NAME = "ggml-tiny.en-q5_1.bin";
+const LOCAL_STT_MODEL_URL =
+  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin";
 
 function resolvePickFolderDefaultPath(rawOptions: unknown): string | undefined {
   if (typeof rawOptions !== "object" || rawOptions === null) {
@@ -224,6 +240,17 @@ let restoreStdIoCapture: (() => void) | null = null;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
 let desktopSettings = readDesktopSettings(DESKTOP_SETTINGS_PATH, app.getVersion());
 let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serverExposureMode;
+let pushToTalkOverlayWindow: BrowserWindow | null = null;
+let pushToTalkOverlayFollowTimer: ReturnType<typeof setInterval> | null = null;
+let pushToTalkNativeHelperProcess: ChildProcess.ChildProcess | null = null;
+let pushToTalkNativeHelperStdout = "";
+let pushToTalkActive = false;
+let pushToTalkOverlayState: DesktopPushToTalkOverlayState = {
+  visible: true,
+  status: "idle",
+  title: "T3 Code",
+  message: "Hold Ctrl+Option",
+};
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
@@ -465,6 +492,7 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
     listeningPromise: backendListeningDetector?.promise ?? null,
     waitForHttpReady: () =>
       waitForBackendHttpReady(baseUrl, {
+        path: "/.well-known/t3/environment",
         timeoutMs: 60_000,
       }),
     cancelHttpWait: cancelBackendReadinessWait,
@@ -591,6 +619,214 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
 
   attachStream(child.stdout);
   attachStream(child.stderr);
+}
+
+function execFilePromise(
+  file: string,
+  args: readonly string[],
+  options?: ChildProcess.ExecFileOptions,
+): Promise<{ readonly stdout: string; readonly stderr: string }> {
+  return new Promise((resolve, reject) => {
+    ChildProcess.execFile(file, [...args], options, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}
+
+function resolveExecutablePath(
+  envName: string,
+  executableNames: readonly string[],
+  resourcePaths: readonly string[] = [],
+): string | null {
+  const configured = process.env[envName]?.trim();
+  if (configured && FS.existsSync(configured)) {
+    return configured;
+  }
+
+  for (const resourcePath of resourcePaths) {
+    if (FS.existsSync(resourcePath)) {
+      return resourcePath;
+    }
+  }
+
+  for (const executableName of executableNames) {
+    try {
+      const resolved = ChildProcess.execFileSync("which", [executableName], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      if (resolved.length > 0) {
+        return resolved;
+      }
+    } catch {
+      // Keep searching.
+    }
+  }
+
+  return null;
+}
+
+function resolveWhisperCliPath(): string | null {
+  return resolveExecutablePath(
+    "T3CODE_STT_BINARY",
+    ["whisper-cli", "whisper.cpp"],
+    [
+      Path.join(__dirname, "../resources/native/whisper-cli"),
+      Path.join(__dirname, "../prod-resources/native/whisper-cli"),
+      Path.join(process.resourcesPath, "resources/native/whisper-cli"),
+      Path.join(process.resourcesPath, "native/whisper-cli"),
+    ],
+  );
+}
+
+function resolveFfmpegPath(): string | null {
+  return resolveExecutablePath(
+    "T3CODE_FFMPEG_BINARY",
+    ["ffmpeg"],
+    [
+      Path.join(__dirname, "../resources/native/ffmpeg"),
+      Path.join(__dirname, "../prod-resources/native/ffmpeg"),
+      Path.join(process.resourcesPath, "resources/native/ffmpeg"),
+      Path.join(process.resourcesPath, "native/ffmpeg"),
+    ],
+  );
+}
+
+async function downloadLocalSttModel(modelPath: string): Promise<void> {
+  FS.mkdirSync(Path.dirname(modelPath), { recursive: true });
+  const temporaryPath = `${modelPath}.${Crypto.randomUUID()}.tmp`;
+  const response = await fetch(LOCAL_STT_MODEL_URL);
+  if (!response.ok) {
+    throw new Error(`Failed to download local STT model: HTTP ${String(response.status)}.`);
+  }
+  const modelBytes = Buffer.from(await response.arrayBuffer());
+  FS.writeFileSync(temporaryPath, modelBytes);
+  FS.renameSync(temporaryPath, modelPath);
+}
+
+async function resolveLocalSttModelPath(): Promise<string> {
+  const configured = process.env.T3CODE_STT_MODEL?.trim();
+  if (configured) {
+    if (!FS.existsSync(configured)) {
+      throw new Error(`Configured local STT model does not exist: ${configured}`);
+    }
+    return configured;
+  }
+
+  const resourceCandidates = [
+    Path.join(__dirname, "../resources/models/whisper", LOCAL_STT_MODEL_NAME),
+    Path.join(__dirname, "../prod-resources/models/whisper", LOCAL_STT_MODEL_NAME),
+    Path.join(process.resourcesPath, "resources/models/whisper", LOCAL_STT_MODEL_NAME),
+    Path.join(process.resourcesPath, "models/whisper", LOCAL_STT_MODEL_NAME),
+  ];
+  for (const candidate of resourceCandidates) {
+    if (FS.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  const modelPath = Path.join(STATE_DIR, "models", "whisper", LOCAL_STT_MODEL_NAME);
+  if (!FS.existsSync(modelPath)) {
+    await downloadLocalSttModel(modelPath);
+  }
+  return modelPath;
+}
+
+function extensionForAudioMimeType(mimeType: string): string {
+  if (mimeType.includes("mp4")) return "mp4";
+  if (mimeType.includes("mpeg")) return "mp3";
+  if (mimeType.includes("wav")) return "wav";
+  if (mimeType.includes("ogg")) return "ogg";
+  return "webm";
+}
+
+function normalizeTranscriptionInput(rawInput: unknown): DesktopPushToTalkTranscriptionInput {
+  if (typeof rawInput !== "object" || rawInput === null) {
+    throw new Error("Invalid push-to-talk transcription input.");
+  }
+
+  const input = rawInput as Partial<DesktopPushToTalkTranscriptionInput>;
+  if (typeof input.mimeType !== "string" || input.mimeType.length === 0) {
+    throw new Error("Invalid push-to-talk transcription input.");
+  }
+
+  const rawAudio = input.audio as unknown;
+  const audio =
+    rawAudio instanceof ArrayBuffer
+      ? rawAudio
+      : ArrayBuffer.isView(rawAudio)
+        ? rawAudio.buffer.slice(rawAudio.byteOffset, rawAudio.byteOffset + rawAudio.byteLength)
+        : null;
+  if (!(audio instanceof ArrayBuffer)) {
+    throw new Error("Invalid push-to-talk transcription input.");
+  }
+
+  return {
+    audio,
+    mimeType: input.mimeType,
+  };
+}
+
+async function transcribePushToTalkAudio(
+  rawInput: unknown,
+): Promise<DesktopPushToTalkTranscriptionResult> {
+  let tempDir: string | null = null;
+  try {
+    const input = normalizeTranscriptionInput(rawInput);
+    const whisperCliPath = resolveWhisperCliPath();
+    if (!whisperCliPath) {
+      return {
+        ok: false,
+        error: "Local STT engine not found. Install whisper.cpp or set T3CODE_STT_BINARY.",
+      };
+    }
+
+    const ffmpegPath = resolveFfmpegPath();
+    if (!ffmpegPath) {
+      return {
+        ok: false,
+        error:
+          "ffmpeg is required for local voice capture. Install ffmpeg or set T3CODE_FFMPEG_BINARY.",
+      };
+    }
+
+    const modelPath = await resolveLocalSttModelPath();
+    tempDir = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-voice-"));
+    const inputPath = Path.join(tempDir, `input.${extensionForAudioMimeType(input.mimeType)}`);
+    const wavPath = Path.join(tempDir, "input.wav");
+    const outputPrefix = Path.join(tempDir, "transcript");
+    FS.writeFileSync(inputPath, Buffer.from(input.audio));
+
+    await execFilePromise(
+      ffmpegPath,
+      ["-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wavPath],
+      { timeout: 30_000 },
+    );
+    const whisperResult = await execFilePromise(
+      whisperCliPath,
+      ["-m", modelPath, "-f", wavPath, "-l", "en", "-otxt", "-of", outputPrefix],
+      { timeout: 120_000, maxBuffer: 1024 * 1024 * 8 },
+    );
+    const transcriptPath = `${outputPrefix}.txt`;
+    const transcript = FS.existsSync(transcriptPath)
+      ? FS.readFileSync(transcriptPath, "utf8")
+      : whisperResult.stdout;
+
+    return { ok: true, text: transcript.trim() };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Local transcription failed.",
+    };
+  } finally {
+    if (tempDir) {
+      FS.rmSync(tempDir, { force: true, recursive: true });
+    }
+  }
 }
 
 initializePackagedLogging();
@@ -1669,6 +1905,38 @@ function registerIpcHandlers(): void {
     return nextState;
   });
 
+  ipcMain.removeHandler(PUSH_TO_TALK_OVERLAY_STATE_CHANNEL);
+  ipcMain.handle(PUSH_TO_TALK_OVERLAY_STATE_CHANNEL, async (_event, rawState: unknown) => {
+    if (typeof rawState !== "object" || rawState === null) {
+      throw new Error("Invalid push-to-talk overlay state.");
+    }
+
+    const state = rawState as Partial<DesktopPushToTalkOverlayState>;
+    if (
+      typeof state.visible !== "boolean" ||
+      (state.status !== "idle" &&
+        state.status !== "listening" &&
+        state.status !== "processing" &&
+        state.status !== "error") ||
+      typeof state.title !== "string" ||
+      (state.message !== undefined && typeof state.message !== "string")
+    ) {
+      throw new Error("Invalid push-to-talk overlay state.");
+    }
+
+    setPushToTalkOverlayState({
+      visible: state.visible,
+      status: state.status,
+      title: state.title,
+      ...(state.message ? { message: state.message } : {}),
+    });
+  });
+
+  ipcMain.removeHandler(PUSH_TO_TALK_TRANSCRIBE_CHANNEL);
+  ipcMain.handle(PUSH_TO_TALK_TRANSCRIBE_CHANNEL, async (_event, rawInput: unknown) => {
+    return await transcribePushToTalkAudio(rawInput);
+  });
+
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async (_event, rawOptions: unknown) => {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
@@ -1916,6 +2184,496 @@ function syncAllWindowAppearance(): void {
   }
 }
 
+function pushToTalkOverlayHtml(): string {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        width: ${PUSH_TO_TALK_OVERLAY_WIDTH}px;
+        height: ${PUSH_TO_TALK_OVERLAY_HEIGHT}px;
+        overflow: hidden;
+        user-select: none;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+        background: transparent;
+      }
+      .card {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 13px 15px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 22px;
+        background: rgba(22, 25, 31, 0.88);
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+        color: rgba(255, 255, 255, 0.92);
+        backdrop-filter: blur(24px) saturate(140%);
+      }
+      .card.idle {
+        inset: auto;
+        top: 6px;
+        left: 6px;
+        width: 54px;
+        height: 54px;
+        justify-content: center;
+        gap: 0;
+        padding: 6px;
+        border-color: rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        background: rgba(22, 25, 31, 0.74);
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
+      }
+      .orb {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #22c55e, #14b8a6);
+        color: white;
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.34);
+      }
+      .listening .orb {
+        animation: pulse 1.1s ease-in-out infinite;
+      }
+      .processing .orb {
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      }
+      .error .orb {
+        background: linear-gradient(135deg, #ef4444, #f97316);
+      }
+      .idle .orb {
+        background: linear-gradient(135deg, #111827, #2563eb);
+      }
+      .copy {
+        min-width: 0;
+      }
+      .idle .copy {
+        display: none;
+      }
+      .title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 18px;
+      }
+      .message {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-top: 3px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 16px;
+      }
+      @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.34); }
+        70% { box-shadow: 0 0 0 14px rgba(34, 197, 94, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="card" class="card idle">
+      <div class="orb" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" stroke="currentColor" stroke-width="2" />
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+      </div>
+      <div class="copy">
+        <div id="title" class="title">T3 Code</div>
+        <div id="message" class="message">Hold Ctrl+Option</div>
+      </div>
+    </div>
+    <script>
+      window.__setPushToTalkState = (state) => {
+        const card = document.getElementById("card");
+        const title = document.getElementById("title");
+        const message = document.getElementById("message");
+        card.className = "card " + state.status;
+        title.textContent = state.title || "Voice";
+        message.textContent = state.message || "";
+      };
+    </script>
+  </body>
+</html>`;
+}
+
+function ensurePushToTalkOverlayWindow(): BrowserWindow {
+  if (pushToTalkOverlayWindow && !pushToTalkOverlayWindow.isDestroyed()) {
+    return pushToTalkOverlayWindow;
+  }
+
+  const window = new BrowserWindow({
+    width: PUSH_TO_TALK_OVERLAY_WIDTH,
+    height: PUSH_TO_TALK_OVERLAY_HEIGHT,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    focusable: false,
+    skipTaskbar: true,
+    show: false,
+    hasShadow: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  window.setIgnoreMouseEvents(true, { forward: true });
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  window.setAlwaysOnTop(true, "screen-saver");
+  window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(pushToTalkOverlayHtml())}`);
+  pushToTalkOverlayWindow = window;
+  window.on("closed", () => {
+    if (pushToTalkOverlayWindow === window) {
+      pushToTalkOverlayWindow = null;
+    }
+  });
+  return window;
+}
+
+function updatePushToTalkOverlayPosition(): void {
+  const overlayWindow = pushToTalkOverlayWindow;
+  if (!overlayWindow || overlayWindow.isDestroyed() || !pushToTalkOverlayState.visible) {
+    return;
+  }
+
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const area = display.workArea;
+  const maxX = area.x + area.width - PUSH_TO_TALK_OVERLAY_WIDTH;
+  const maxY = area.y + area.height - PUSH_TO_TALK_OVERLAY_HEIGHT;
+  const preferredX = cursor.x + PUSH_TO_TALK_OVERLAY_CURSOR_OFFSET;
+  const preferredY = cursor.y + PUSH_TO_TALK_OVERLAY_CURSOR_OFFSET;
+  const x = Math.min(Math.max(preferredX, area.x), maxX);
+  const y = Math.min(Math.max(preferredY, area.y), maxY);
+  overlayWindow.setBounds({
+    x: Math.round(x),
+    y: Math.round(y),
+    width: PUSH_TO_TALK_OVERLAY_WIDTH,
+    height: PUSH_TO_TALK_OVERLAY_HEIGHT,
+  });
+}
+
+function startPushToTalkOverlayFollow(): void {
+  if (pushToTalkOverlayFollowTimer) {
+    return;
+  }
+  updatePushToTalkOverlayPosition();
+  pushToTalkOverlayFollowTimer = setInterval(updatePushToTalkOverlayPosition, 33);
+  pushToTalkOverlayFollowTimer.unref();
+}
+
+function stopPushToTalkOverlayFollow(): void {
+  if (!pushToTalkOverlayFollowTimer) {
+    return;
+  }
+  clearInterval(pushToTalkOverlayFollowTimer);
+  pushToTalkOverlayFollowTimer = null;
+}
+
+function setPushToTalkOverlayState(state: DesktopPushToTalkOverlayState): void {
+  pushToTalkOverlayState = state;
+  if (!state.visible) {
+    stopPushToTalkOverlayFollow();
+    pushToTalkOverlayWindow?.hide();
+    return;
+  }
+
+  const overlayWindow = ensurePushToTalkOverlayWindow();
+  const applyState = () => {
+    void overlayWindow.webContents
+      .executeJavaScript(`window.__setPushToTalkState(${JSON.stringify(state)})`)
+      .catch(() => undefined);
+  };
+  if (overlayWindow.webContents.isLoading()) {
+    overlayWindow.webContents.once("did-finish-load", applyState);
+  } else {
+    applyState();
+  }
+  startPushToTalkOverlayFollow();
+  overlayWindow.showInactive();
+}
+
+function showIdlePushToTalkOverlay(): void {
+  setPushToTalkOverlayState({
+    visible: true,
+    status: "idle",
+    title: "T3 Code",
+    message: "Hold Ctrl+Option",
+  });
+}
+
+function sendPushToTalkEvent(type: "start" | "stop"): void {
+  const targetWindow = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+  targetWindow?.webContents.send(PUSH_TO_TALK_EVENT_CHANNEL, { type });
+}
+
+function startPushToTalk(source: "native" | "shortcut"): void {
+  if (pushToTalkActive) {
+    return;
+  }
+  pushToTalkActive = true;
+  setPushToTalkOverlayState({
+    visible: true,
+    status: "listening",
+    title: "Listening",
+    message:
+      source === "native" ? "Release Ctrl+Option to send" : "Press Ctrl+Option+Space again to send",
+  });
+  sendPushToTalkEvent("start");
+}
+
+function stopPushToTalk(): void {
+  if (!pushToTalkActive) {
+    return;
+  }
+  pushToTalkActive = false;
+  setPushToTalkOverlayState({
+    visible: true,
+    status: "processing",
+    title: "Sending voice command",
+    message: "Starting agent session",
+  });
+  sendPushToTalkEvent("stop");
+}
+
+function startPushToTalkFromShortcut(): void {
+  startPushToTalk("shortcut");
+}
+
+function stopPushToTalkFromShortcut(): void {
+  stopPushToTalk();
+}
+
+function startPushToTalkFromNativeHelper(): void {
+  startPushToTalk("native");
+}
+
+function stopPushToTalkFromNativeHelper(): void {
+  stopPushToTalk();
+}
+
+function compileNativePushToTalkHelperForDevelopment(): string | null {
+  if (process.platform !== "darwin" || app.isPackaged) {
+    return null;
+  }
+
+  const sourcePath = Path.join(
+    ROOT_DIR,
+    "apps",
+    "desktop",
+    "native",
+    "macos-push-to-talk-helper.swift",
+  );
+  const outputPath = Path.join(STATE_DIR, "native-helpers", PUSH_TO_TALK_NATIVE_HELPER_NAME);
+
+  try {
+    if (!FS.existsSync(sourcePath)) {
+      return null;
+    }
+
+    const sourceStat = FS.statSync(sourcePath);
+    const outputStat = FS.existsSync(outputPath) ? FS.statSync(outputPath) : null;
+    if (outputStat && outputStat.mtimeMs >= sourceStat.mtimeMs) {
+      return outputPath;
+    }
+
+    FS.mkdirSync(Path.dirname(outputPath), { recursive: true });
+    const result = ChildProcess.spawnSync("xcrun", ["swiftc", sourcePath, "-O", "-o", outputPath], {
+      cwd: ROOT_DIR,
+      encoding: "utf8",
+    });
+    if (result.status !== 0) {
+      writeDesktopLogHeader(
+        `push-to-talk native helper compile failed status=${String(result.status)} stderr=${sanitizeLogValue(
+          result.stderr ?? "",
+        )}`,
+      );
+      return null;
+    }
+    FS.chmodSync(outputPath, 0o755);
+    return outputPath;
+  } catch (error) {
+    writeDesktopLogHeader(
+      `push-to-talk native helper compile error=${
+        error instanceof Error ? sanitizeLogValue(error.message) : "unknown"
+      }`,
+    );
+    return null;
+  }
+}
+
+function resolveNativePushToTalkHelperPath(): string | null {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  const developmentHelperPath = compileNativePushToTalkHelperForDevelopment();
+  if (developmentHelperPath) {
+    return developmentHelperPath;
+  }
+
+  const candidates = [
+    Path.join(__dirname, "../resources/native", PUSH_TO_TALK_NATIVE_HELPER_NAME),
+    Path.join(__dirname, "../prod-resources/native", PUSH_TO_TALK_NATIVE_HELPER_NAME),
+    Path.join(process.resourcesPath, "resources/native", PUSH_TO_TALK_NATIVE_HELPER_NAME),
+    Path.join(process.resourcesPath, "native", PUSH_TO_TALK_NATIVE_HELPER_NAME),
+  ];
+
+  for (const candidate of candidates) {
+    if (FS.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function handleNativePushToTalkHelperLine(line: string): void {
+  switch (line.trim()) {
+    case "ready":
+    case "permission-granted":
+      writeDesktopLogHeader(`push-to-talk native helper ${line.trim()}`);
+      showIdlePushToTalkOverlay();
+      break;
+    case "start":
+      startPushToTalkFromNativeHelper();
+      break;
+    case "stop":
+      stopPushToTalkFromNativeHelper();
+      break;
+    case "permission-required":
+      setPushToTalkOverlayState({
+        visible: true,
+        status: "error",
+        title: "Enable Accessibility",
+        message: "Grant T3 Code access in System Settings",
+      });
+      writeDesktopLogHeader("push-to-talk native helper requested accessibility permission");
+      break;
+    case "permission-timeout":
+    case "tap-unavailable":
+      setPushToTalkOverlayState({
+        visible: true,
+        status: "error",
+        title: "Push-to-talk unavailable",
+        message: "Enable Accessibility, then restart T3 Code",
+      });
+      writeDesktopLogHeader(`push-to-talk native helper ${line.trim()}`);
+      break;
+    default:
+      if (line.trim().length > 0) {
+        writeDesktopLogHeader(`push-to-talk native helper output=${sanitizeLogValue(line)}`);
+      }
+      break;
+  }
+}
+
+function startNativePushToTalkHelper(): void {
+  if (process.platform !== "darwin" || pushToTalkNativeHelperProcess) {
+    return;
+  }
+
+  const helperPath = resolveNativePushToTalkHelperPath();
+  if (!helperPath) {
+    writeDesktopLogHeader("push-to-talk native helper missing; using accelerator fallback only");
+    return;
+  }
+
+  const child = ChildProcess.spawn(helperPath, [], {
+    cwd: Path.dirname(helperPath),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  pushToTalkNativeHelperProcess = child;
+  pushToTalkNativeHelperStdout = "";
+
+  child.stdout?.on("data", (chunk: unknown) => {
+    pushToTalkNativeHelperStdout += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    const lines = pushToTalkNativeHelperStdout.split(/\r?\n/);
+    pushToTalkNativeHelperStdout = lines.pop() ?? "";
+    for (const line of lines) {
+      handleNativePushToTalkHelperLine(line);
+    }
+  });
+  child.stderr?.on("data", (chunk: unknown) => {
+    const message = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    writeDesktopLogHeader(`push-to-talk native helper stderr=${sanitizeLogValue(message)}`);
+  });
+  child.once("error", (error) => {
+    if (pushToTalkNativeHelperProcess === child) {
+      pushToTalkNativeHelperProcess = null;
+    }
+    writeDesktopLogHeader(`push-to-talk native helper error=${sanitizeLogValue(error.message)}`);
+  });
+  child.once("exit", (code, signal) => {
+    if (pushToTalkNativeHelperProcess === child) {
+      pushToTalkNativeHelperProcess = null;
+    }
+    if (pushToTalkActive) {
+      stopPushToTalkFromNativeHelper();
+    }
+    if (!isQuitting) {
+      writeDesktopLogHeader(
+        `push-to-talk native helper exited code=${String(code)} signal=${String(signal)}`,
+      );
+    }
+  });
+}
+
+function stopNativePushToTalkHelper(): void {
+  const child = pushToTalkNativeHelperProcess;
+  pushToTalkNativeHelperProcess = null;
+  pushToTalkNativeHelperStdout = "";
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  child.kill("SIGTERM");
+  setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+  }, 2_000).unref();
+}
+
+function registerPushToTalkShortcuts(): void {
+  if (!app.isReady()) {
+    return;
+  }
+  globalShortcut.unregister(PUSH_TO_TALK_GLOBAL_SHORTCUT);
+  const registered = globalShortcut.register(PUSH_TO_TALK_GLOBAL_SHORTCUT, () => {
+    if (pushToTalkActive) {
+      stopPushToTalkFromShortcut();
+    } else {
+      startPushToTalkFromShortcut();
+    }
+  });
+  if (!registered) {
+    writeDesktopLogHeader(
+      `push-to-talk failed to register shortcut accelerator=${PUSH_TO_TALK_GLOBAL_SHORTCUT}`,
+    );
+  }
+  showIdlePushToTalkOverlay();
+}
+
 nativeTheme.on("updated", syncAllWindowAppearance);
 
 function createWindow(): BrowserWindow {
@@ -2082,9 +2840,7 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap backend start requested");
 
   if (isDevelopment) {
-    mainWindow = createWindow();
-    writeDesktopLogHeader("bootstrap main window created");
-    void waitForBackendWindowReady(backendHttpUrl)
+    await waitForBackendWindowReady(backendHttpUrl)
       .then((source) => {
         writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
       })
@@ -2097,6 +2853,8 @@ async function bootstrap(): Promise<void> {
         );
         console.warn("[desktop] backend readiness check timed out during dev bootstrap", error);
       });
+    mainWindow = createWindow();
+    writeDesktopLogHeader("bootstrap main window created");
     return;
   }
 
@@ -2109,6 +2867,10 @@ app.on("before-quit", () => {
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
   cancelBackendReadinessWait();
+  globalShortcut.unregister(PUSH_TO_TALK_GLOBAL_SHORTCUT);
+  stopNativePushToTalkHelper();
+  stopPushToTalkOverlayFollow();
+  pushToTalkOverlayWindow?.destroy();
   stopBackend();
   restoreStdIoCapture?.();
 });
@@ -2121,6 +2883,8 @@ app
     configureApplicationMenu();
     registerDesktopProtocol();
     configureAutoUpdater();
+    registerPushToTalkShortcuts();
+    startNativePushToTalkHelper();
     void bootstrap().catch((error) => {
       if (isBackendReadinessAborted(error) && isQuitting) {
         return;

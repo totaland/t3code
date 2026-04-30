@@ -11,8 +11,11 @@ import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
 
-// Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-const history = isElectron ? createHashHistory() : createBrowserHistory();
+// Packaged Electron loads from the backend/custom shell, where hash history
+// avoids path resolution issues. Desktop development still loads Vite over
+// HTTP, so it must use browser history like the normal web app.
+const usesHttpShell = window.location.protocol === "http:" || window.location.protocol === "https:";
+const history = isElectron && !usesHttpShell ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
 

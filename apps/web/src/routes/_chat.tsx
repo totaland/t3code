@@ -29,6 +29,10 @@ function ChatRouteGlobalShortcuts() {
   const appSettings = useSettings();
 
   useEffect(() => {
+    const defaultThreadEnvMode = resolveSidebarNewThreadEnvMode({
+      defaultEnvMode: appSettings.defaultThreadEnvMode,
+    });
+
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const command = resolveShortcutCommand(event, keybindings, {
@@ -55,9 +59,7 @@ function ChatRouteGlobalShortcuts() {
           activeDraftThread,
           activeThread,
           defaultProjectRef,
-          defaultThreadEnvMode: resolveSidebarNewThreadEnvMode({
-            defaultEnvMode: appSettings.defaultThreadEnvMode,
-          }),
+          defaultThreadEnvMode,
           handleNewThread,
         });
         return;
@@ -70,17 +72,31 @@ function ChatRouteGlobalShortcuts() {
           activeDraftThread,
           activeThread,
           defaultProjectRef,
-          defaultThreadEnvMode: resolveSidebarNewThreadEnvMode({
-            defaultEnvMode: appSettings.defaultThreadEnvMode,
-          }),
+          defaultThreadEnvMode,
           handleNewThread,
         });
       }
     };
 
+    const unsubscribePushToTalk = window.desktopBridge?.onPushToTalkEvent((event) => {
+      if (
+        event.type !== "start" ||
+        activeDraftThread ||
+        activeThread ||
+        !defaultProjectRef ||
+        useCommandPaletteStore.getState().open
+      ) {
+        return;
+      }
+
+      window.sessionStorage.setItem("t3code:voice-autostart", "1");
+      void handleNewThread(defaultProjectRef, { envMode: defaultThreadEnvMode });
+    });
+
     window.addEventListener("keydown", onWindowKeyDown);
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
+      unsubscribePushToTalk?.();
     };
   }, [
     activeDraftThread,

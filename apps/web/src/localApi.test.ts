@@ -203,6 +203,9 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       throw new Error("installUpdate not implemented in test");
     },
     onUpdateState: () => () => undefined,
+    onPushToTalkEvent: () => () => undefined,
+    setPushToTalkOverlayState: async () => undefined,
+    transcribePushToTalkAudio: async () => ({ ok: true, text: "" }),
     ...overrides,
   };
 }

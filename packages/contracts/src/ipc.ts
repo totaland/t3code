@@ -143,6 +143,24 @@ export interface DesktopServerExposureState {
   advertisedHost: string | null;
 }
 
+export type DesktopPushToTalkEvent = { type: "start" } | { type: "stop" };
+
+export interface DesktopPushToTalkOverlayState {
+  visible: boolean;
+  status: "idle" | "listening" | "processing" | "error";
+  title: string;
+  message?: string;
+}
+
+export interface DesktopPushToTalkTranscriptionInput {
+  audio: ArrayBuffer;
+  mimeType: string;
+}
+
+export type DesktopPushToTalkTranscriptionResult =
+  | { ok: true; text: string }
+  | { ok: false; error: string };
+
 export interface PickFolderOptions {
   initialPath?: string | null;
 }
@@ -176,6 +194,11 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  onPushToTalkEvent: (listener: (event: DesktopPushToTalkEvent) => void) => () => void;
+  setPushToTalkOverlayState: (state: DesktopPushToTalkOverlayState) => Promise<void>;
+  transcribePushToTalkAudio: (
+    input: DesktopPushToTalkTranscriptionInput,
+  ) => Promise<DesktopPushToTalkTranscriptionResult>;
 }
 
 /**
