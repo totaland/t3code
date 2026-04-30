@@ -50,6 +50,7 @@ const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
   homePath: "",
   shadowHomePath: "",
   customModels: [],
+  mcpServers: {},
   ...overrides,
 });
 
