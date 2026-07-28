@@ -55,7 +55,8 @@ There's no public docs site yet, checkout the miscellaneous markdown files in [d
 
 T3 Code can proxy microphone audio to a loopback-only local speech service. The
 browser records a push-to-talk WAV, T3 sends the transcript as the current
-agent turn, and the completed reply is synthesized and played back.
+agent turn, then synthesizes and queues completed sentences while the reply
+streams. Any final incomplete sentence is spoken when the message completes.
 
 Configure the T3 server, not the browser:
 

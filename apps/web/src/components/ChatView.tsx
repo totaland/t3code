@@ -1264,7 +1264,7 @@ function ChatViewContent(props: ChatViewProps) {
     readonly messageId: MessageId;
     readonly routeThreadKey: string;
     readonly epoch: number;
-    readonly spokenAssistantMessageIds: Set<string>;
+    readonly spokenAssistantOffsets: Map<string, number>;
   } | null>(null);
   const voiceEpochRef = useRef(0);
   const [voiceResolutionTick, setVoiceResolutionTick] = useState(0);
@@ -4996,7 +4996,7 @@ function ChatViewContent(props: ChatViewProps) {
         messageId,
         routeThreadKey: voiceRouteThreadKey,
         epoch: voiceEpoch,
-        spokenAssistantMessageIds: new Set(),
+        spokenAssistantOffsets: new Map(),
       };
       setVoicePhase("waiting");
     } catch (error) {
@@ -5035,7 +5035,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread.messages,
       pendingVoiceTurn.messageId,
       latestTurnSettled,
-      pendingVoiceTurn.spokenAssistantMessageIds,
+      pendingVoiceTurn.spokenAssistantOffsets,
     );
     if (resolution.status !== "ready") {
       if (!latestTurnSettled) {
@@ -5063,7 +5063,7 @@ function ChatViewContent(props: ChatViewProps) {
         return () => window.clearTimeout(retryTimer);
       }
 
-      const hadSpeech = pendingVoiceTurn.spokenAssistantMessageIds.size > 0;
+      const hadSpeech = pendingVoiceTurn.spokenAssistantOffsets.size > 0;
       pendingVoiceTurnRef.current = null;
       voiceEmptySinceRef.current = null;
       setVoicePhase("idle");
@@ -5077,7 +5077,12 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
-    pendingVoiceTurn.spokenAssistantMessageIds.add(resolution.messageId);
+    const previousSpokenOffset =
+      pendingVoiceTurn.spokenAssistantOffsets.get(resolution.messageId) ?? 0;
+    pendingVoiceTurn.spokenAssistantOffsets.set(
+      resolution.messageId,
+      previousSpokenOffset + resolution.text.length,
+    );
     voiceEmptySinceRef.current = null;
     const speechText = normalizeAssistantTextForSpeech(resolution.text);
     if (!speechText) {

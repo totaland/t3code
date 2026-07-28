@@ -108,10 +108,10 @@ export type CompletedAssistantVoiceMessage = {
   readonly text: string;
 };
 
-export function nextCompletedAssistantMessageForVoiceTurn(
+export function nextAssistantSpeechChunkForVoiceTurn(
   messages: ReadonlyArray<VoiceTurnMessage>,
   userMessageId: string,
-  spokenAssistantMessageIds: ReadonlySet<string>,
+  spokenAssistantProgress: ReadonlyMap<string, number> | ReadonlySet<string>,
 ): CompletedAssistantVoiceMessage | null {
   const userMessageIndex = messages.findIndex(
     (message) => message.id === userMessageId && message.role === "user",
@@ -119,13 +119,25 @@ export function nextCompletedAssistantMessageForVoiceTurn(
   if (userMessageIndex < 0) return null;
 
   for (const message of messages.slice(userMessageIndex + 1)) {
-    if (
-      message.role === "assistant" &&
-      !message.streaming &&
-      message.text.trim().length > 0 &&
-      !spokenAssistantMessageIds.has(message.id)
-    ) {
-      return { messageId: message.id, text: message.text };
+    if (message.role !== "assistant" || message.text.trim().length === 0) continue;
+
+    const spokenOffset =
+      "get" in spokenAssistantProgress
+        ? Math.min(spokenAssistantProgress.get(message.id) ?? 0, message.text.length)
+        : spokenAssistantProgress.has(message.id)
+          ? message.text.length
+          : 0;
+    if (spokenOffset >= message.text.length) continue;
+
+    const remainingText = message.text.slice(spokenOffset);
+    if (!message.streaming) {
+      return { messageId: message.id, text: remainingText };
+    }
+
+    const sentenceBoundary = /[.!?](?:\s+|$)|\n+/u.exec(remainingText);
+    if (sentenceBoundary) {
+      const chunkEnd = sentenceBoundary.index + sentenceBoundary[0].length;
+      return { messageId: message.id, text: remainingText.slice(0, chunkEnd) };
     }
   }
   return null;
@@ -140,17 +152,17 @@ export function resolveVoiceTurnResponse(
   messages: ReadonlyArray<VoiceTurnMessage>,
   userMessageId: string,
   turnSettled: boolean,
-  spokenAssistantMessageIds: ReadonlySet<string> = new Set(),
+  spokenAssistantProgress: ReadonlyMap<string, number> | ReadonlySet<string> = new Map(),
 ): VoiceTurnResolution {
   const userMessageExists = messages.some(
     (message) => message.id === userMessageId && message.role === "user",
   );
   if (!userMessageExists) return { status: "pending" };
 
-  const message = nextCompletedAssistantMessageForVoiceTurn(
+  const message = nextAssistantSpeechChunkForVoiceTurn(
     messages,
     userMessageId,
-    spokenAssistantMessageIds,
+    spokenAssistantProgress,
   );
   if (message) return { status: "ready", ...message };
   return turnSettled ? { status: "empty" } : { status: "pending" };
