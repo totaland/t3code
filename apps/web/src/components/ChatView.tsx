@@ -1276,6 +1276,8 @@ function ChatViewContent(props: ChatViewProps) {
   const voiceRequestAbortRef = useRef<AbortController | null>(null);
   const voicePlaybackContextRef = useRef<AudioContext | null>(null);
   const voicePlaybackSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const voicePlaybackTailRef = useRef<Promise<void>>(Promise.resolve());
+  const voicePendingPlaybackCountRef = useRef(0);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -4899,6 +4901,8 @@ function ChatViewContent(props: ChatViewProps) {
     voiceRequestAbortRef.current = null;
     const source = voicePlaybackSourceRef.current;
     voicePlaybackSourceRef.current = null;
+    voicePlaybackTailRef.current = Promise.resolve();
+    voicePendingPlaybackCountRef.current = 0;
     if (source) {
       try {
         source.stop();
@@ -5038,6 +5042,13 @@ function ChatViewContent(props: ChatViewProps) {
       pendingVoiceTurn.spokenAssistantOffsets,
     );
     if (resolution.status !== "ready") {
+      if (voicePendingPlaybackCountRef.current > 0) {
+        voiceEmptySinceRef.current = null;
+        const retryTimer = window.setTimeout(() => {
+          setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
+        }, 250);
+        return () => window.clearTimeout(retryTimer);
+      }
       if (!latestTurnSettled) {
         voiceEmptySinceRef.current = null;
         const retryTimer = window.setTimeout(() => {
@@ -5095,6 +5106,7 @@ function ChatViewContent(props: ChatViewProps) {
     const controller = new AbortController();
     voiceRequestAbortRef.current = controller;
     setVoicePhase("speaking");
+    let queuedForPlayback = false;
     void (async () => {
       const wav = await synthesizeVoiceReply({
         httpBaseUrl: environmentHttpBaseUrl,
@@ -5121,34 +5133,63 @@ function ChatViewContent(props: ChatViewProps) {
       ) {
         return;
       }
-      await context.resume();
 
-      await new Promise<void>((resolve, reject) => {
-        const source = context.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(context.destination);
-        voicePlaybackSourceRef.current = source;
-        source.addEventListener(
-          "ended",
-          () => {
+      const previousPlayback = voicePlaybackTailRef.current;
+      const playback = previousPlayback.then(async () => {
+        if (
+          controller.signal.aborted ||
+          voiceEpochRef.current !== voiceEpoch ||
+          voiceRouteThreadKeyRef.current !== pendingVoiceTurn.routeThreadKey
+        ) {
+          return;
+        }
+        await context.resume();
+
+        await new Promise<void>((resolve, reject) => {
+          const source = context.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(context.destination);
+          voicePlaybackSourceRef.current = source;
+          source.addEventListener(
+            "ended",
+            () => {
+              if (voicePlaybackSourceRef.current === source) {
+                voicePlaybackSourceRef.current = null;
+              }
+              source.disconnect();
+              resolve();
+            },
+            { once: true },
+          );
+          try {
+            source.start();
+          } catch (error) {
             if (voicePlaybackSourceRef.current === source) {
               voicePlaybackSourceRef.current = null;
             }
             source.disconnect();
-            resolve();
-          },
-          { once: true },
-        );
-        try {
-          source.start();
-        } catch (error) {
-          if (voicePlaybackSourceRef.current === source) {
-            voicePlaybackSourceRef.current = null;
+            reject(error);
           }
-          source.disconnect();
-          reject(error);
+        });
+      });
+      voicePendingPlaybackCountRef.current += 1;
+      const trackedPlayback = playback.finally(() => {
+        voicePendingPlaybackCountRef.current = Math.max(
+          0,
+          voicePendingPlaybackCountRef.current - 1,
+        );
+        if (voiceEpochRef.current === voiceEpoch) {
+          setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
         }
       });
+      voicePlaybackTailRef.current = trackedPlayback.catch(() => {});
+      queuedForPlayback = true;
+      if (voiceRequestAbortRef.current === controller) {
+        voiceRequestAbortRef.current = null;
+      }
+      setVoicePhase("waiting");
+      setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
+      await trackedPlayback;
     })()
       .catch((error: unknown) => {
         if (!controller.signal.aborted && voiceEpochRef.current === voiceEpoch) {
@@ -5157,6 +5198,10 @@ function ChatViewContent(props: ChatViewProps) {
             title: "Local speech playback failed",
             description: chatActionErrorMessage(error),
           });
+          if (!queuedForPlayback) {
+            setVoicePhase("waiting");
+            setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
+          }
         }
       })
       .finally(() => {
@@ -5164,8 +5209,6 @@ function ChatViewContent(props: ChatViewProps) {
         if (voiceRequestAbortRef.current === controller) {
           voiceRequestAbortRef.current = null;
         }
-        setVoicePhase("waiting");
-        setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
       });
   }, [
     activeThread,
