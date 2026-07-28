@@ -154,6 +154,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { ComposerVoiceInputButton, type VoiceTurnPhase } from "./ComposerVoiceInputButton";
 import {
   BotIcon,
   CircleAlertIcon,
@@ -522,6 +523,7 @@ export interface ChatComposerProps {
   isConnecting: boolean;
   isSendBusy: boolean;
   isPreparingWorktree: boolean;
+  voicePhase: VoiceTurnPhase;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -581,6 +583,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
+  onVoiceCapture: (wav: Blob) => Promise<void>;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -633,6 +636,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isConnecting,
     isSendBusy,
     isPreparingWorktree,
+    voicePhase,
     environmentUnavailable,
     activePendingApproval,
     pendingApprovals,
@@ -667,6 +671,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContextsRef,
     composerElementContextsRef,
     onSend,
+    onVoiceCapture,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -2715,6 +2720,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                <ComposerVoiceInputButton
+                  disabled={
+                    isConnecting ||
+                    isSendBusy ||
+                    isComposerApprovalState ||
+                    pendingUserInputs.length > 0 ||
+                    projectSelectionRequired ||
+                    environmentUnavailable !== null ||
+                    noProviderAvailable ||
+                    prompt.trim().length > 0
+                  }
+                  phase={voicePhase}
+                  onCapture={onVoiceCapture}
+                />
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}

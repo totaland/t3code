@@ -204,7 +204,11 @@ import {
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import {
+  useEnvironmentHttpBaseUrl,
+  useEnvironments,
+  usePrimaryEnvironment,
+} from "../state/environments";
 import {
   useProject,
   useProjects,
@@ -215,6 +219,13 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import type { VoiceTurnPhase } from "./chat/ComposerVoiceInputButton";
+import {
+  normalizeAssistantTextForSpeech,
+  resolveVoiceTurnResponse,
+  synthesizeVoiceReply,
+  transcribeVoiceWav,
+} from "../voice/voiceClient";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -1166,6 +1177,7 @@ function ChatViewContent(props: ChatViewProps) {
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const environmentById = useMemo(
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
@@ -1239,6 +1251,23 @@ function ChatViewContent(props: ChatViewProps) {
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const [voicePhase, setVoicePhase] = useState<VoiceTurnPhase>("idle");
+  const pendingVoiceTurnRef = useRef<{
+    readonly messageId: MessageId;
+    readonly routeThreadKey: string;
+    readonly epoch: number;
+    readonly spokenAssistantMessageIds: Set<string>;
+  } | null>(null);
+  const voiceEpochRef = useRef(0);
+  const [voiceResolutionTick, setVoiceResolutionTick] = useState(0);
+  const voiceEmptySinceRef = useRef<{
+    readonly epoch: number;
+    readonly observedAt: number;
+  } | null>(null);
+  const voiceRouteThreadKeyRef = useRef(routeThreadKey);
+  const voiceRequestAbortRef = useRef<AbortController | null>(null);
+  const voicePlaybackContextRef = useRef<AudioContext | null>(null);
+  const voicePlaybackSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -4434,8 +4463,14 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
-    e?.preventDefault();
+  const onSend = async (input?: {
+    readonly preventDefault?: () => void;
+    readonly promptOverride?: string;
+  }) => {
+    input?.preventDefault?.();
+    if (voicePhase !== "idle" && input?.promptOverride === undefined) {
+      cancelVoiceTurn();
+    }
     if (
       !activeThread ||
       isSendBusy ||
@@ -4462,7 +4497,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
-    const promptForSend = promptRef.current;
+    const promptForSend = input?.promptOverride ?? promptRef.current;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -4825,9 +4860,309 @@ function ChatViewContent(props: ChatViewProps) {
       );
       resetLocalDispatch();
     }
+    return turnStartSucceeded ? messageIdForSend : null;
   };
 
+  const stopVoiceOutput = useCallback(() => {
+    voiceRequestAbortRef.current?.abort();
+    voiceRequestAbortRef.current = null;
+    const source = voicePlaybackSourceRef.current;
+    voicePlaybackSourceRef.current = null;
+    if (source) {
+      try {
+        source.stop();
+      } catch {
+        // It may already have ended.
+      }
+      source.disconnect();
+    }
+  }, []);
+
+  const cancelVoiceTurn = useCallback(() => {
+    voiceEpochRef.current += 1;
+    pendingVoiceTurnRef.current = null;
+    voiceEmptySinceRef.current = null;
+    stopVoiceOutput();
+    setVoicePhase("idle");
+  }, [stopVoiceOutput]);
+
+  const ensureVoicePlaybackContext = useCallback(async (): Promise<AudioContext> => {
+    const existing = voicePlaybackContextRef.current;
+    if (existing && existing.state !== "closed") {
+      await existing.resume();
+      return existing;
+    }
+    const next = new AudioContext();
+    voicePlaybackContextRef.current = next;
+    await next.resume();
+    return next;
+  }, []);
+
+  const onVoiceCapture = async (wav: Blob): Promise<void> => {
+    if (promptRef.current.trim().length > 0) {
+      toastManager.add({
+        type: "warning",
+        title: "Typed message not sent",
+        description: "Clear or send the typed message before starting a voice turn.",
+      });
+      setVoicePhase("idle");
+      return;
+    }
+    if (!environmentHttpBaseUrl) {
+      toastManager.add({
+        type: "error",
+        title: "Local voice is unavailable",
+        description: "The selected T3 environment is not connected.",
+      });
+      setVoicePhase("idle");
+      return;
+    }
+
+    cancelVoiceTurn();
+    const voiceEpoch = voiceEpochRef.current;
+    const voiceRouteThreadKey = routeThreadKey;
+    setVoicePhase("transcribing");
+    try {
+      // Created/resumed from the stop-recording click so delayed reply playback
+      // remains allowed by mobile browser autoplay policies.
+      await ensureVoicePlaybackContext();
+      if (
+        voiceEpochRef.current !== voiceEpoch ||
+        voiceRouteThreadKeyRef.current !== voiceRouteThreadKey
+      ) {
+        return;
+      }
+
+      const controller = new AbortController();
+      voiceRequestAbortRef.current = controller;
+      const transcript = await transcribeVoiceWav({
+        httpBaseUrl: environmentHttpBaseUrl,
+        wav,
+        signal: controller.signal,
+      });
+      if (
+        controller.signal.aborted ||
+        voiceEpochRef.current !== voiceEpoch ||
+        voiceRouteThreadKeyRef.current !== voiceRouteThreadKey
+      ) {
+        return;
+      }
+      if (voiceRequestAbortRef.current === controller) {
+        voiceRequestAbortRef.current = null;
+      }
+
+      const messageId = await onSend({ promptOverride: transcript });
+      if (
+        voiceEpochRef.current !== voiceEpoch ||
+        voiceRouteThreadKeyRef.current !== voiceRouteThreadKey
+      ) {
+        return;
+      }
+      if (!messageId) {
+        throw new Error("The transcribed message could not be sent.");
+      }
+      pendingVoiceTurnRef.current = {
+        messageId,
+        routeThreadKey: voiceRouteThreadKey,
+        epoch: voiceEpoch,
+        spokenAssistantMessageIds: new Set(),
+      };
+      setVoicePhase("waiting");
+    } catch (error) {
+      if (voiceEpochRef.current !== voiceEpoch) return;
+      const aborted =
+        error instanceof DOMException
+          ? error.name === "AbortError"
+          : voiceRequestAbortRef.current?.signal.aborted;
+      if (!aborted) {
+        toastManager.add({
+          type: "error",
+          title: "Local voice turn failed",
+          description: chatActionErrorMessage(error),
+        });
+      }
+      voiceRequestAbortRef.current = null;
+      pendingVoiceTurnRef.current = null;
+      setVoicePhase("idle");
+    }
+  };
+
+  useEffect(() => {
+    const pendingVoiceTurn = pendingVoiceTurnRef.current;
+    if (voicePhase !== "waiting" || !pendingVoiceTurn || !activeThread || !environmentHttpBaseUrl) {
+      return;
+    }
+    if (
+      pendingVoiceTurn.epoch !== voiceEpochRef.current ||
+      pendingVoiceTurn.routeThreadKey !== routeThreadKey
+    ) {
+      cancelVoiceTurn();
+      return;
+    }
+
+    const resolution = resolveVoiceTurnResponse(
+      activeThread.messages,
+      pendingVoiceTurn.messageId,
+      latestTurnSettled,
+      pendingVoiceTurn.spokenAssistantMessageIds,
+    );
+    if (resolution.status !== "ready") {
+      if (!latestTurnSettled) {
+        voiceEmptySinceRef.current = null;
+        const retryTimer = window.setTimeout(() => {
+          setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
+        }, 250);
+        return () => window.clearTimeout(retryTimer);
+      }
+
+      const previousEmptyState = voiceEmptySinceRef.current;
+      const observedAt =
+        previousEmptyState?.epoch === pendingVoiceTurn.epoch
+          ? previousEmptyState.observedAt
+          : Date.now();
+      voiceEmptySinceRef.current = {
+        epoch: pendingVoiceTurn.epoch,
+        observedAt,
+      };
+
+      if (Date.now() - observedAt < 2_000) {
+        const retryTimer = window.setTimeout(() => {
+          setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
+        }, 250);
+        return () => window.clearTimeout(retryTimer);
+      }
+
+      const hadSpeech = pendingVoiceTurn.spokenAssistantMessageIds.size > 0;
+      pendingVoiceTurnRef.current = null;
+      voiceEmptySinceRef.current = null;
+      setVoicePhase("idle");
+      if (!hadSpeech) {
+        toastManager.add({
+          type: "warning",
+          title: "Agent reply had no speech",
+          description: "The turn completed without a text response to read aloud.",
+        });
+      }
+      return;
+    }
+
+    pendingVoiceTurn.spokenAssistantMessageIds.add(resolution.messageId);
+    voiceEmptySinceRef.current = null;
+    const speechText = normalizeAssistantTextForSpeech(resolution.text);
+    if (!speechText) {
+      setVoicePhase("waiting");
+      setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
+      return;
+    }
+
+    const voiceEpoch = pendingVoiceTurn.epoch;
+    const controller = new AbortController();
+    voiceRequestAbortRef.current = controller;
+    setVoicePhase("speaking");
+    void (async () => {
+      const wav = await synthesizeVoiceReply({
+        httpBaseUrl: environmentHttpBaseUrl,
+        text: speechText,
+        signal: controller.signal,
+      });
+      if (
+        controller.signal.aborted ||
+        voiceEpochRef.current !== voiceEpoch ||
+        voiceRouteThreadKeyRef.current !== pendingVoiceTurn.routeThreadKey
+      ) {
+        return;
+      }
+
+      const context = voicePlaybackContextRef.current;
+      if (!context || context.state === "closed") {
+        throw new Error("Voice playback was not unlocked. Tap the microphone and try again.");
+      }
+      const audioBuffer = await context.decodeAudioData(await wav.arrayBuffer());
+      if (
+        controller.signal.aborted ||
+        voiceEpochRef.current !== voiceEpoch ||
+        voiceRouteThreadKeyRef.current !== pendingVoiceTurn.routeThreadKey
+      ) {
+        return;
+      }
+      await context.resume();
+
+      await new Promise<void>((resolve, reject) => {
+        const source = context.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(context.destination);
+        voicePlaybackSourceRef.current = source;
+        source.addEventListener(
+          "ended",
+          () => {
+            if (voicePlaybackSourceRef.current === source) {
+              voicePlaybackSourceRef.current = null;
+            }
+            source.disconnect();
+            resolve();
+          },
+          { once: true },
+        );
+        try {
+          source.start();
+        } catch (error) {
+          if (voicePlaybackSourceRef.current === source) {
+            voicePlaybackSourceRef.current = null;
+          }
+          source.disconnect();
+          reject(error);
+        }
+      });
+    })()
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted && voiceEpochRef.current === voiceEpoch) {
+          toastManager.add({
+            type: "error",
+            title: "Local speech playback failed",
+            description: chatActionErrorMessage(error),
+          });
+        }
+      })
+      .finally(() => {
+        if (voiceEpochRef.current !== voiceEpoch) return;
+        if (voiceRequestAbortRef.current === controller) {
+          voiceRequestAbortRef.current = null;
+        }
+        setVoicePhase("waiting");
+        setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
+      });
+  }, [
+    activeThread,
+    cancelVoiceTurn,
+    environmentHttpBaseUrl,
+    latestTurnSettled,
+    routeThreadKey,
+    voicePhase,
+    voiceResolutionTick,
+  ]);
+
+  useEffect(() => {
+    if (voiceRouteThreadKeyRef.current === routeThreadKey) return;
+    voiceRouteThreadKeyRef.current = routeThreadKey;
+    cancelVoiceTurn();
+  }, [cancelVoiceTurn, routeThreadKey]);
+
+  useEffect(
+    () => () => {
+      voiceEpochRef.current += 1;
+      pendingVoiceTurnRef.current = null;
+      stopVoiceOutput();
+      const context = voicePlaybackContextRef.current;
+      voicePlaybackContextRef.current = null;
+      if (context && context.state !== "closed") {
+        void context.close();
+      }
+    },
+    [stopVoiceOutput],
+  );
   const onInterrupt = async () => {
+    cancelVoiceTurn();
+
     if (!activeThread) return;
     const result = await interruptThreadTurn({
       environmentId,
@@ -5800,6 +6135,7 @@ function ChatViewContent(props: ChatViewProps) {
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
                             isPreparingWorktree={isPreparingWorktree}
+                            voicePhase={voicePhase}
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
@@ -5835,6 +6171,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
+                            onVoiceCapture={onVoiceCapture}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

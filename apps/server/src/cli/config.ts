@@ -130,6 +130,14 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  voiceServiceUrl: Config.string("T3CODE_VOICE_SERVICE_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  voiceServiceApiKey: Config.string("T3CODE_VOICE_SERVICE_API_KEY").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -370,6 +378,8 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      voiceServiceUrl: env.voiceServiceUrl,
+      voiceServiceApiKey: env.voiceServiceApiKey,
     };
 
     return config;

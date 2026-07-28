@@ -51,6 +51,24 @@ We are not accepting contributions yet.
 
 There's no public docs site yet, checkout the miscellaneous markdown files in [docs](./docs).
 
+## Local microphone voice bridge
+
+T3 Code can proxy microphone audio to a loopback-only local speech service. The
+browser records a push-to-talk WAV, T3 sends the transcript as the current
+agent turn, and the completed reply is synthesized and played back.
+
+Configure the T3 server, not the browser:
+
+```dotenv
+T3CODE_VOICE_SERVICE_URL="http://127.0.0.1:8090"
+T3CODE_VOICE_SERVICE_API_KEY="a separate local speech-service key"
+```
+
+Remote/mobile microphone access requires a secure browser context. Use HTTPS
+(for example Tailscale Serve) rather than plain Tailnet HTTP. The API key stays
+server-side, and the voice proxy routes require an authenticated T3 session
+with environment operate scope.
+
 ## Documentation
 
 - [Getting started](./docs/getting-started/quick-start.md)
