@@ -288,11 +288,6 @@ export function ComposerVoiceInputButton(props: {
         }
       >
         <MicIcon className={isRecording ? "animate-pulse" : undefined} />
-        {isRecording && (
-          <span className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-full bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground shadow-lg">
-            Recording — tap mic again to send
-          </span>
-        )}
         <span className="sr-only" aria-live="polite">
           {label}
         </span>
