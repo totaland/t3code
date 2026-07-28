@@ -172,6 +172,7 @@ import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { ComposerVoiceInputButton, type VoiceTurnPhase } from "./ComposerVoiceInputButton";
+import { ComposerVoiceEnginePicker } from "./ComposerVoiceEnginePicker";
 import {
   BotIcon,
   CircleAlertIcon,
@@ -591,6 +592,7 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
   onVoiceCapture: (wav: Blob) => Promise<void>;
+  onVoicePlaybackUnlock: () => Promise<unknown>;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -679,6 +681,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerElementContextsRef,
     onSend,
     onVoiceCapture,
+    onVoicePlaybackUnlock,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -3159,6 +3162,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                <ComposerVoiceEnginePicker />
                 <ComposerVoiceInputButton
                   disabled={
                     isConnecting ||
@@ -3172,6 +3176,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   phase={voicePhase}
                   onCapture={onVoiceCapture}
+                  onPlaybackUnlock={onVoicePlaybackUnlock}
                 />
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}

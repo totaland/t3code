@@ -23,6 +23,20 @@ const SYNTHESIZE_PATH = "/api/voice/synthesize";
 const MAX_WAV_BYTES = 6 * 1024 * 1024;
 const MAX_SPEECH_TEXT_LENGTH = 4_000;
 const VOICE_SERVICE_TIMEOUT_MS = 45_000;
+const VOICE_ENGINES = new Set([
+  "kokoro",
+  "qwen_voice_design",
+  "qwen_voice_clone",
+  "cosyvoice3",
+  "step_audio_editx",
+]);
+
+type VoiceSynthesisInput = {
+  readonly text: string;
+  readonly engine: string;
+  readonly voice_instruction?: string;
+  readonly voice_profile_id?: string;
+};
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
@@ -89,11 +103,11 @@ async function requestTranscription(config: VoiceServiceConfig, wav: Uint8Array)
   return { response, payload };
 }
 
-async function requestSynthesis(config: VoiceServiceConfig, text: string) {
+async function requestSynthesis(config: VoiceServiceConfig, input: VoiceSynthesisInput) {
   const response = await fetchVoiceService(config, "/v1/speech/synthesize", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: encodeUnknownJson({ text }),
+    body: encodeUnknownJson(input),
   });
   const wav = response.ok ? new Uint8Array(await response.arrayBuffer()) : new Uint8Array();
   return { response, wav };
@@ -196,11 +210,47 @@ const synthesizeRouteLayer = HttpRouter.add(
       typeof payload.value.text === "string"
         ? payload.value.text.trim()
         : "";
+    const value =
+      payload._tag === "Some" && typeof payload.value === "object" && payload.value !== null
+        ? payload.value
+        : null;
+    const engine =
+      value && "engine" in value && typeof value.engine === "string" ? value.engine : "kokoro";
+    const voiceInstruction =
+      value && "voice_instruction" in value && typeof value.voice_instruction === "string"
+        ? value.voice_instruction.trim()
+        : undefined;
+    const voiceProfileId =
+      value && "voice_profile_id" in value && typeof value.voice_profile_id === "string"
+        ? value.voice_profile_id.trim()
+        : undefined;
     if (!text || text.length > MAX_SPEECH_TEXT_LENGTH) {
       return HttpServerResponse.text("Speech text is empty or too long.", { status: 422 });
     }
+    if (!VOICE_ENGINES.has(engine)) {
+      return HttpServerResponse.text("Unknown voice engine.", { status: 422 });
+    }
+    if (engine === "qwen_voice_design" && (!voiceInstruction || voiceInstruction.length > 500)) {
+      return HttpServerResponse.text("Qwen Voice Design requires a voice description.", {
+        status: 422,
+      });
+    }
+    if (
+      ["qwen_voice_clone", "cosyvoice3", "step_audio_editx"].includes(engine) &&
+      (!voiceProfileId || !/^[A-Za-z0-9_-]{1,64}$/u.test(voiceProfileId))
+    ) {
+      return HttpServerResponse.text("This voice engine requires a local voice profile.", {
+        status: 422,
+      });
+    }
     const upstream = yield* Effect.tryPromise({
-      try: () => requestSynthesis(service, text),
+      try: () =>
+        requestSynthesis(service, {
+          text,
+          engine,
+          ...(voiceInstruction ? { voice_instruction: voiceInstruction } : {}),
+          ...(voiceProfileId ? { voice_profile_id: voiceProfileId } : {}),
+        }),
       catch: (cause) => new VoiceProxyError({ cause }),
     }).pipe(Effect.option);
     if (upstream._tag === "None") {

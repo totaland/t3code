@@ -232,6 +232,8 @@ import {
   synthesizeVoiceReply,
   transcribeVoiceWav,
 } from "../voice/voiceClient";
+import { beginVoiceTurnRouteHold, endVoiceTurnRouteHold } from "../voice/voiceTurnRouteHold";
+import { primeVoicePlaybackContext } from "../voice/voicePlayback";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -4914,6 +4916,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
 
   const cancelVoiceTurn = useCallback(() => {
+    endVoiceTurnRouteHold(voiceRouteThreadKeyRef.current);
     voiceEpochRef.current += 1;
     pendingVoiceTurnRef.current = null;
     voiceEmptySinceRef.current = null;
@@ -4924,12 +4927,12 @@ function ChatViewContent(props: ChatViewProps) {
   const ensureVoicePlaybackContext = useCallback(async (): Promise<AudioContext> => {
     const existing = voicePlaybackContextRef.current;
     if (existing && existing.state !== "closed") {
-      await existing.resume();
+      await primeVoicePlaybackContext(existing);
       return existing;
     }
     const next = new AudioContext();
     voicePlaybackContextRef.current = next;
-    await next.resume();
+    await primeVoicePlaybackContext(next);
     return next;
   }, []);
 
@@ -4986,6 +4989,7 @@ function ChatViewContent(props: ChatViewProps) {
         voiceRequestAbortRef.current = null;
       }
 
+      beginVoiceTurnRouteHold(voiceRouteThreadKey);
       const messageId = await onSend({ promptOverride: transcript });
       if (
         voiceEpochRef.current !== voiceEpoch ||
@@ -5018,6 +5022,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       voiceRequestAbortRef.current = null;
       pendingVoiceTurnRef.current = null;
+      endVoiceTurnRouteHold(voiceRouteThreadKey);
       setVoicePhase("idle");
     }
   };
@@ -5077,6 +5082,7 @@ function ChatViewContent(props: ChatViewProps) {
       const hadSpeech = pendingVoiceTurn.spokenAssistantOffsets.size > 0;
       pendingVoiceTurnRef.current = null;
       voiceEmptySinceRef.current = null;
+      endVoiceTurnRouteHold(pendingVoiceTurn.routeThreadKey);
       setVoicePhase("idle");
       if (!hadSpeech) {
         toastManager.add({
@@ -5228,6 +5234,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(
     () => () => {
+      endVoiceTurnRouteHold(voiceRouteThreadKeyRef.current);
       voiceEpochRef.current += 1;
       pendingVoiceTurnRef.current = null;
       stopVoiceOutput();
@@ -6252,6 +6259,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
                             onVoiceCapture={onVoiceCapture}
+                            onVoicePlaybackUnlock={ensureVoicePlaybackContext}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

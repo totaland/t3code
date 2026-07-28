@@ -234,6 +234,7 @@ export function ComposerVoiceInputButton(props: {
   disabled?: boolean;
   phase: VoiceTurnPhase;
   onCapture: (wav: Blob) => Promise<void>;
+  onPlaybackUnlock: () => Promise<unknown>;
 }) {
   const currentCaptureState = useSyncExternalStore(
     subscribeCaptureState,
@@ -246,7 +247,17 @@ export function ComposerVoiceInputButton(props: {
   const isRecording = currentCaptureState === "recording";
   const handleClick = () => {
     if (isRecording) {
-      void stopActiveCapture();
+      stopActiveCapture();
+      if (getCaptureState() === "idle") {
+        void props.onPlaybackUnlock().catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Audio playback unavailable",
+            description:
+              error instanceof Error ? error.message : "The browser blocked audio playback.",
+          });
+        });
+      }
       return;
     }
     void startActiveCapture(props.onCapture);

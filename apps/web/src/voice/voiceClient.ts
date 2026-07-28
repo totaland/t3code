@@ -1,3 +1,4 @@
+import { getVoiceSynthesisSettings } from "./voiceSettings";
 export type VoiceFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 function voiceEndpoint(baseUrl: string, path: string): URL {
@@ -45,12 +46,18 @@ export async function synthesizeVoiceReply(input: {
   readonly signal?: AbortSignal;
   readonly fetchImplementation?: VoiceFetch;
 }): Promise<Blob> {
+  const settings = getVoiceSynthesisSettings();
   const fetchImplementation = input.fetchImplementation ?? fetch;
   const response = await fetchImplementation(
     voiceEndpoint(input.httpBaseUrl, "/api/voice/synthesize"),
     {
       method: "POST",
-      body: JSON.stringify({ text: input.text }),
+      body: JSON.stringify({
+        text: input.text,
+        engine: settings.engine,
+        ...(settings.voiceInstruction ? { voice_instruction: settings.voiceInstruction } : {}),
+        ...(settings.voiceProfileId ? { voice_profile_id: settings.voiceProfileId } : {}),
+      }),
       credentials: "include",
       headers: { "content-type": "application/json" },
       ...(input.signal ? { signal: input.signal } : {}),
