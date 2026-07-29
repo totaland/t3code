@@ -20,27 +20,23 @@ import * as ServerConfig from "../config.ts";
 
 const TRANSCRIBE_PATH = "/api/voice/transcribe";
 const SYNTHESIZE_PATH = "/api/voice/synthesize";
-const MAX_WAV_BYTES = 6 * 1024 * 1024;
-const MAX_SPEECH_TEXT_LENGTH = 4_000;
-const VOICE_SERVICE_TIMEOUT_MS = 45_000;
-const VOICE_ENGINES = new Set([
-  "kokoro",
-  "qwen_voice_design",
-  "qwen_voice_clone",
-  "cosyvoice3",
-  "step_audio_editx",
-]);
+const MAX_WAV_BYTES = 20 * 1024 * 1024;
+const MAX_TRANSCRIPT_TEXT_LENGTH = 4_000;
+const MAX_TTS_TEXT_LENGTH = 1_500;
+const MODEL_GATEWAY_TIMEOUT_MS = 45_000;
+const VOICE_BACKENDS = new Set(["auto", "qwen3", "kokoro", "step_audio_editx"]);
 
+export function isSupportedVoiceBackend(value: string): boolean {
+  return VOICE_BACKENDS.has(value);
+}
 type VoiceSynthesisInput = {
   readonly text: string;
-  readonly engine: string;
-  readonly voice_instruction?: string;
-  readonly voice_profile_id?: string;
+  readonly backend: string;
 };
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
-type VoiceServiceConfig = {
+type ModelGatewayConfig = {
   readonly baseUrl: URL;
   readonly apiKey: string;
 };
@@ -51,12 +47,12 @@ class VoiceProxyError extends Data.TaggedError("VoiceProxyError")<{
   readonly cause: unknown;
 }> {}
 
-export function resolveVoiceServiceConfig(input: {
-  readonly voiceServiceUrl?: string | undefined;
-  readonly voiceServiceApiKey?: string | undefined;
-}): VoiceServiceConfig | null {
-  const rawUrl = input.voiceServiceUrl?.trim();
-  const apiKey = input.voiceServiceApiKey?.trim();
+export function resolveModelGatewayConfig(input: {
+  readonly modelGatewayUrl?: string | undefined;
+  readonly modelGatewayApiKey?: string | undefined;
+}): ModelGatewayConfig | null {
+  const rawUrl = input.modelGatewayUrl?.trim();
+  const apiKey = input.modelGatewayApiKey?.trim();
   if (!rawUrl || !apiKey || apiKey.length < 16) return null;
   let baseUrl: URL;
   try {
@@ -78,23 +74,23 @@ export function resolveVoiceServiceConfig(input: {
   return { baseUrl, apiKey };
 }
 
-export async function fetchVoiceService(
-  config: VoiceServiceConfig,
-  path: "/v1/speech/transcribe" | "/v1/speech/synthesize",
+export async function fetchModelGateway(
+  config: ModelGatewayConfig,
+  path: "/v1/stt" | "/v1/tts",
   init: RequestInit,
   fetchImplementation: VoiceFetch = fetch,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
-  headers.set("x-api-key", config.apiKey);
+  headers.set("authorization", `Bearer ${config.apiKey}`);
   return fetchImplementation(new URL(path, config.baseUrl), {
     ...init,
     headers,
-    signal: AbortSignal.timeout(VOICE_SERVICE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(MODEL_GATEWAY_TIMEOUT_MS),
   });
 }
 
-async function requestTranscription(config: VoiceServiceConfig, wav: Uint8Array) {
-  const response = await fetchVoiceService(config, "/v1/speech/transcribe", {
+async function requestTranscription(config: ModelGatewayConfig, wav: Uint8Array) {
+  const response = await fetchModelGateway(config, "/v1/stt", {
     method: "POST",
     headers: { "content-type": "audio/wav" },
     body: wav,
@@ -103,14 +99,50 @@ async function requestTranscription(config: VoiceServiceConfig, wav: Uint8Array)
   return { response, payload };
 }
 
-async function requestSynthesis(config: VoiceServiceConfig, input: VoiceSynthesisInput) {
-  const response = await fetchVoiceService(config, "/v1/speech/synthesize", {
+async function requestSynthesis(config: ModelGatewayConfig, input: VoiceSynthesisInput) {
+  const response = await fetchModelGateway(config, "/v1/tts", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: encodeUnknownJson(input),
   });
-  const wav = response.ok ? new Uint8Array(await response.arrayBuffer()) : new Uint8Array();
-  return { response, wav };
+  const pcm = response.ok ? new Uint8Array(await response.arrayBuffer()) : new Uint8Array();
+  return { response, pcm };
+}
+
+export function encodePcm16Wav(
+  pcm: Uint8Array,
+  sampleRate: number,
+  channels: number,
+): Uint8Array | null {
+  if (
+    pcm.byteLength === 0 ||
+    pcm.byteLength % 2 !== 0 ||
+    pcm.byteLength > 0xffff_ffff - 36 ||
+    !Number.isInteger(sampleRate) ||
+    sampleRate < 8_000 ||
+    sampleRate > 96_000 ||
+    channels !== 1
+  ) {
+    return null;
+  }
+
+  const wav = new Uint8Array(44 + pcm.byteLength);
+  const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
+  wav.set([82, 73, 70, 70], 0);
+  view.setUint32(4, 36 + pcm.byteLength, true);
+  wav.set([87, 65, 86, 69], 8);
+  wav.set([102, 109, 116, 32], 12);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  wav.set([100, 97, 116, 97], 36);
+  view.setUint32(40, pcm.byteLength, true);
+  wav.set(pcm, 44);
+  return wav;
 }
 
 const authorizeVoiceRoute = Effect.gen(function* () {
@@ -136,9 +168,9 @@ const transcribeRouteLayer = HttpRouter.add(
     yield* authorizeVoiceRoute;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const config = yield* ServerConfig.ServerConfig;
-    const service = resolveVoiceServiceConfig(config);
-    if (!service) {
-      return HttpServerResponse.text("Local voice service is not configured.", { status: 503 });
+    const gateway = resolveModelGatewayConfig(config);
+    if (!gateway) {
+      return HttpServerResponse.text("Voice model gateway is not configured.", { status: 503 });
     }
     const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
     if (contentType !== "audio/wav") {
@@ -155,16 +187,16 @@ const transcribeRouteLayer = HttpRouter.add(
       });
     }
     const upstream = yield* Effect.tryPromise({
-      try: () => requestTranscription(service, wav),
+      try: () => requestTranscription(gateway, wav),
       catch: (cause) => new VoiceProxyError({ cause }),
     }).pipe(Effect.option);
     if (upstream._tag === "None") {
-      return HttpServerResponse.text("Local voice service is unavailable.", { status: 502 });
+      return HttpServerResponse.text("Voice model gateway is unavailable.", { status: 502 });
     }
     const { response, payload } = upstream.value;
     if (!response.ok) {
       return HttpServerResponse.text(
-        response.status === 409 ? "Local voice service is busy." : "Transcription failed.",
+        response.status === 409 ? "Voice model gateway is busy." : "Transcription failed.",
         { status: response.status === 409 ? 409 : 502 },
       );
     }
@@ -175,8 +207,8 @@ const transcribeRouteLayer = HttpRouter.add(
       typeof payload.text === "string"
         ? payload.text.trim()
         : "";
-    if (!text || text.length > MAX_SPEECH_TEXT_LENGTH) {
-      return HttpServerResponse.text("Local voice service returned an invalid transcript.", {
+    if (!text || text.length > MAX_TRANSCRIPT_TEXT_LENGTH) {
+      return HttpServerResponse.text("Voice model gateway returned an invalid transcript.", {
         status: 502,
       });
     }
@@ -197,9 +229,9 @@ const synthesizeRouteLayer = HttpRouter.add(
     yield* authorizeVoiceRoute;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const config = yield* ServerConfig.ServerConfig;
-    const service = resolveVoiceServiceConfig(config);
-    if (!service) {
-      return HttpServerResponse.text("Local voice service is not configured.", { status: 503 });
+    const gateway = resolveModelGatewayConfig(config);
+    if (!gateway) {
+      return HttpServerResponse.text("Voice model gateway is not configured.", { status: 503 });
     }
     const payload = yield* request.json.pipe(Effect.option);
     const text =
@@ -214,52 +246,34 @@ const synthesizeRouteLayer = HttpRouter.add(
       payload._tag === "Some" && typeof payload.value === "object" && payload.value !== null
         ? payload.value
         : null;
-    const engine =
-      value && "engine" in value && typeof value.engine === "string" ? value.engine : "kokoro";
-    const voiceInstruction =
-      value && "voice_instruction" in value && typeof value.voice_instruction === "string"
-        ? value.voice_instruction.trim()
-        : undefined;
-    const voiceProfileId =
-      value && "voice_profile_id" in value && typeof value.voice_profile_id === "string"
-        ? value.voice_profile_id.trim()
-        : undefined;
-    if (!text || text.length > MAX_SPEECH_TEXT_LENGTH) {
+    const backend =
+      value && "backend" in value && typeof value.backend === "string" ? value.backend : "auto";
+    if (!text || text.length > MAX_TTS_TEXT_LENGTH) {
       return HttpServerResponse.text("Speech text is empty or too long.", { status: 422 });
     }
-    if (!VOICE_ENGINES.has(engine)) {
-      return HttpServerResponse.text("Unknown voice engine.", { status: 422 });
-    }
-    if (engine === "qwen_voice_design" && (!voiceInstruction || voiceInstruction.length > 500)) {
-      return HttpServerResponse.text("Qwen Voice Design requires a voice description.", {
-        status: 422,
-      });
-    }
-    if (
-      ["qwen_voice_clone", "cosyvoice3", "step_audio_editx"].includes(engine) &&
-      (!voiceProfileId || !/^[A-Za-z0-9_-]{1,64}$/u.test(voiceProfileId))
-    ) {
-      return HttpServerResponse.text("This voice engine requires a local voice profile.", {
-        status: 422,
-      });
+    if (!isSupportedVoiceBackend(backend)) {
+      return HttpServerResponse.text("Unknown voice backend.", { status: 422 });
     }
     const upstream = yield* Effect.tryPromise({
-      try: () =>
-        requestSynthesis(service, {
-          text,
-          engine,
-          ...(voiceInstruction ? { voice_instruction: voiceInstruction } : {}),
-          ...(voiceProfileId ? { voice_profile_id: voiceProfileId } : {}),
-        }),
+      try: () => requestSynthesis(gateway, { text, backend }),
       catch: (cause) => new VoiceProxyError({ cause }),
     }).pipe(Effect.option);
     if (upstream._tag === "None") {
-      return HttpServerResponse.text("Local voice service is unavailable.", { status: 502 });
+      return HttpServerResponse.text("Voice model gateway is unavailable.", { status: 502 });
     }
-    const { response, wav } = upstream.value;
-    if (!response.ok || !response.headers.get("content-type")?.startsWith("audio/wav")) {
+    const { response, pcm } = upstream.value;
+    const contentType = response.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+    const sampleRate = Number(response.headers.get("x-audio-sample-rate"));
+    const channels = Number(response.headers.get("x-audio-channels"));
+    const wav =
+      response.ok && contentType === "audio/l16" ? encodePcm16Wav(pcm, sampleRate, channels) : null;
+    if (!response.ok || !wav) {
       return HttpServerResponse.text(
-        response.status === 409 ? "Local voice service is busy." : "Speech synthesis failed.",
+        response.status === 409 ? "Voice model gateway is busy." : "Speech synthesis failed.",
         { status: response.status === 409 ? 409 : 502 },
       );
     }

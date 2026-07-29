@@ -1,50 +1,32 @@
-export type VoiceEngine =
-  | "kokoro"
-  | "qwen_voice_design"
-  | "qwen_voice_clone"
-  | "cosyvoice3"
-  | "step_audio_editx";
+export type VoiceBackend = "auto" | "qwen3" | "kokoro" | "step_audio_editx";
 
 export type VoiceSynthesisSettings = {
-  readonly engine: VoiceEngine;
-  readonly voiceInstruction?: string;
-  readonly voiceProfileId?: string;
+  readonly backend: VoiceBackend;
 };
 
-export const voiceEngineOptions: ReadonlyArray<{ value: VoiceEngine; label: string }> = [
+export const voiceBackendOptions: ReadonlyArray<{ value: VoiceBackend; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "qwen3", label: "Qwen3-TTS" },
   { value: "kokoro", label: "Kokoro" },
-  { value: "qwen_voice_design", label: "Qwen Voice Design" },
-  { value: "qwen_voice_clone", label: "Qwen Voice Clone" },
-  { value: "cosyvoice3", label: "CosyVoice 3" },
-  { value: "step_audio_editx", label: "Step Audio EditX" },
+  { value: "step_audio_editx", label: "Step-Audio-EditX" },
 ];
 
-const STORAGE_KEY = "t3.voice.synthesis";
-const DEFAULT_SETTINGS: VoiceSynthesisSettings = { engine: "kokoro" };
-const voiceEngines = new Set(voiceEngineOptions.map((option) => option.value));
+const STORAGE_KEY = "t3.voice.backend";
+const DEFAULT_SETTINGS: VoiceSynthesisSettings = { backend: "auto" };
+const voiceBackends = new Set(voiceBackendOptions.map((option) => option.value));
 
 export function getVoiceSynthesisSettings(): VoiceSynthesisSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
   try {
     const value: unknown = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null");
-    if (typeof value !== "object" || value === null || !("engine" in value))
+    if (typeof value !== "object" || value === null || !("backend" in value)) {
       return DEFAULT_SETTINGS;
-    const engine = value.engine;
-    if (typeof engine !== "string" || !voiceEngines.has(engine as VoiceEngine))
+    }
+    const backend = value.backend;
+    if (typeof backend !== "string" || !voiceBackends.has(backend as VoiceBackend)) {
       return DEFAULT_SETTINGS;
-    const voiceInstruction =
-      "voiceInstruction" in value && typeof value.voiceInstruction === "string"
-        ? value.voiceInstruction.trim().slice(0, 500)
-        : undefined;
-    const voiceProfileId =
-      "voiceProfileId" in value && typeof value.voiceProfileId === "string"
-        ? value.voiceProfileId.trim()
-        : undefined;
-    return {
-      engine: engine as VoiceEngine,
-      ...(voiceInstruction ? { voiceInstruction } : {}),
-      ...(voiceProfileId ? { voiceProfileId } : {}),
-    };
+    }
+    return { backend: backend as VoiceBackend };
   } catch {
     return DEFAULT_SETTINGS;
   }

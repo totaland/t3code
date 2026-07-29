@@ -52,12 +52,7 @@ export async function synthesizeVoiceReply(input: {
     voiceEndpoint(input.httpBaseUrl, "/api/voice/synthesize"),
     {
       method: "POST",
-      body: JSON.stringify({
-        text: input.text,
-        engine: settings.engine,
-        ...(settings.voiceInstruction ? { voice_instruction: settings.voiceInstruction } : {}),
-        ...(settings.voiceProfileId ? { voice_profile_id: settings.voiceProfileId } : {}),
-      }),
+      body: JSON.stringify({ text: input.text, backend: settings.backend }),
       credentials: "include",
       headers: { "content-type": "application/json" },
       ...(input.signal ? { signal: input.signal } : {}),
@@ -81,7 +76,7 @@ export function normalizeAssistantTextForSpeech(text: string): string {
     .replace(/[*_~>#]/gu, " ")
     .replace(/\s+/gu, " ")
     .trim()
-    .slice(0, 4_000);
+    .slice(0, 1_500);
 }
 
 export type VoiceTurnMessage = {

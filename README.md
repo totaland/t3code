@@ -53,16 +53,20 @@ There's no public docs site yet, checkout the miscellaneous markdown files in [d
 
 ## Local microphone voice bridge
 
-T3 Code can proxy microphone audio to a loopback-only local speech service. The
-browser records a push-to-talk WAV, T3 sends the transcript as the current
-agent turn, then synthesizes and queues completed sentences while the reply
-streams. Any final incomplete sentence is spoken when the message completes.
+T3 Code can proxy microphone audio to the loopback-only `backend-voice` model
+gateway. The browser records a push-to-talk WAV, T3 sends the transcript as the
+current agent turn, then synthesizes and queues completed sentences while the
+reply streams. Any final incomplete sentence is spoken when the message
+completes. T3 wraps the gateway's raw PCM16 stream in a browser-playable WAV.
+The composer selector exposes `Auto`, `Qwen3-TTS`, `Kokoro`, and
+`Step-Audio-EditX`; Step uses the trusted server-side James reference and never
+accepts an arbitrary client voice path.
 
 Configure the T3 server, not the browser:
 
 ```dotenv
-T3CODE_VOICE_SERVICE_URL="http://127.0.0.1:8090"
-T3CODE_VOICE_SERVICE_API_KEY="a separate local speech-service key"
+T3CODE_MODEL_GATEWAY_URL="http://127.0.0.1:8091"
+T3CODE_MODEL_GATEWAY_API_KEY="the same value as backend-voice MODEL_GATEWAY_API_KEY"
 ```
 
 Remote/mobile microphone access requires a secure browser context. Use HTTPS

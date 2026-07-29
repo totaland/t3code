@@ -139,11 +139,11 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  voiceServiceUrl: Config.string("T3CODE_VOICE_SERVICE_URL").pipe(
+  modelGatewayUrl: Config.string("T3CODE_MODEL_GATEWAY_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  voiceServiceApiKey: Config.string("T3CODE_VOICE_SERVICE_API_KEY").pipe(
+  modelGatewayApiKey: Config.string("T3CODE_MODEL_GATEWAY_API_KEY").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -388,8 +388,8 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
-      voiceServiceUrl: env.voiceServiceUrl,
-      voiceServiceApiKey: env.voiceServiceApiKey,
+      modelGatewayUrl: env.modelGatewayUrl,
+      modelGatewayApiKey: env.modelGatewayApiKey,
     };
 
     return config;
