@@ -3,6 +3,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -100,24 +101,21 @@ async function requestTranscription(config: ModelGatewayConfig, wav: Uint8Array)
 }
 
 async function requestSynthesis(config: ModelGatewayConfig, input: VoiceSynthesisInput) {
-  const response = await fetchModelGateway(config, "/v1/tts", {
+  return fetchModelGateway(config, "/v1/tts", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: encodeUnknownJson(input),
   });
-  const pcm = response.ok ? new Uint8Array(await response.arrayBuffer()) : new Uint8Array();
-  return { response, pcm };
 }
 
-export function encodePcm16Wav(
-  pcm: Uint8Array,
-  sampleRate: number,
-  channels: number,
-): Uint8Array | null {
+export function readPcmStreamMetadata(
+  response: Response,
+): { readonly sampleRate: number; readonly channels: 1 } | null {
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  const sampleRate = Number(response.headers.get("x-audio-sample-rate"));
+  const channels = Number(response.headers.get("x-audio-channels"));
   if (
-    pcm.byteLength === 0 ||
-    pcm.byteLength % 2 !== 0 ||
-    pcm.byteLength > 0xffff_ffff - 36 ||
+    contentType !== "audio/l16" ||
     !Number.isInteger(sampleRate) ||
     sampleRate < 8_000 ||
     sampleRate > 96_000 ||
@@ -125,24 +123,25 @@ export function encodePcm16Wav(
   ) {
     return null;
   }
+  return { sampleRate, channels: 1 };
+}
 
-  const wav = new Uint8Array(44 + pcm.byteLength);
-  const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
-  wav.set([82, 73, 70, 70], 0);
-  view.setUint32(4, 36 + pcm.byteLength, true);
-  wav.set([87, 65, 86, 69], 8);
-  wav.set([102, 109, 116, 32], 12);
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, channels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * channels * 2, true);
-  view.setUint16(32, channels * 2, true);
-  view.setUint16(34, 16, true);
-  wav.set([100, 97, 116, 97], 36);
-  view.setUint32(40, pcm.byteLength, true);
-  wav.set(pcm, 44);
-  return wav;
+export function createPcmStreamResponse(
+  body: ReadableStream<Uint8Array>,
+  metadata: { readonly sampleRate: number; readonly channels: 1 },
+) {
+  const stream = Stream.fromReadableStream({
+    evaluate: () => body,
+    onError: (cause) => new VoiceProxyError({ cause }),
+  });
+  return HttpServerResponse.stream(stream, {
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "audio/L16",
+      "X-Audio-Channels": String(metadata.channels),
+      "X-Audio-Sample-Rate": String(metadata.sampleRate),
+    },
+  });
 }
 
 const authorizeVoiceRoute = Effect.gen(function* () {
@@ -261,28 +260,15 @@ const synthesizeRouteLayer = HttpRouter.add(
     if (upstream._tag === "None") {
       return HttpServerResponse.text("Voice model gateway is unavailable.", { status: 502 });
     }
-    const { response, pcm } = upstream.value;
-    const contentType = response.headers
-      .get("content-type")
-      ?.split(";", 1)[0]
-      ?.trim()
-      .toLowerCase();
-    const sampleRate = Number(response.headers.get("x-audio-sample-rate"));
-    const channels = Number(response.headers.get("x-audio-channels"));
-    const wav =
-      response.ok && contentType === "audio/l16" ? encodePcm16Wav(pcm, sampleRate, channels) : null;
-    if (!response.ok || !wav) {
+    const response = upstream.value;
+    const metadata = readPcmStreamMetadata(response);
+    if (!response.ok || !metadata || !response.body) {
       return HttpServerResponse.text(
         response.status === 409 ? "Voice model gateway is busy." : "Speech synthesis failed.",
         { status: response.status === 409 ? 409 : 502 },
       );
     }
-    return HttpServerResponse.uint8Array(wav, {
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "audio/wav",
-      },
-    });
+    return createPcmStreamResponse(response.body, metadata);
   }).pipe(
     Effect.catchTags({
       EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,

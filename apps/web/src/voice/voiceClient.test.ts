@@ -3,7 +3,7 @@ import {
   completedAssistantTextForVoiceTurn,
   normalizeAssistantTextForSpeech,
   resolveVoiceTurnResponse,
-  synthesizeVoiceReply,
+  synthesizeVoiceReplyStream,
   transcribeVoiceWav,
   type VoiceFetch,
 } from "./voiceClient";
@@ -29,27 +29,16 @@ describe("local voice client", () => {
     expect(requests[0]?.init?.body).toBe(wav);
   });
 
-  it("returns synthesized WAV and rejects invalid audio", async () => {
-    const wavFetch: VoiceFetch = async () =>
-      new Response(new Uint8Array([82, 73, 70, 70]), {
-        headers: { "content-type": "audio/wav" },
-      });
+  it("rejects invalid streaming audio metadata", async () => {
     const invalidFetch: VoiceFetch = async () => new Response("bad");
 
     await expect(
-      synthesizeVoiceReply({
-        httpBaseUrl: "http://localhost:3773",
-        text: "reply",
-        fetchImplementation: wavFetch,
-      }),
-    ).resolves.toMatchObject({ size: 4, type: "audio/wav" });
-    await expect(
-      synthesizeVoiceReply({
+      synthesizeVoiceReplyStream({
         httpBaseUrl: "http://localhost:3773",
         text: "reply",
         fetchImplementation: invalidFetch,
       }),
-    ).rejects.toThrow("invalid audio");
+    ).rejects.toThrow("invalid PCM stream");
   });
 
   it("turns assistant markdown into bounded speakable text", () => {

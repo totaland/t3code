@@ -229,11 +229,12 @@ import type { VoiceTurnPhase } from "./chat/ComposerVoiceInputButton";
 import {
   normalizeAssistantTextForSpeech,
   resolveVoiceTurnResponse,
-  synthesizeVoiceReply,
+  synthesizeVoiceReplyStream,
   transcribeVoiceWav,
 } from "../voice/voiceClient";
 import { beginVoiceTurnRouteHold, endVoiceTurnRouteHold } from "../voice/voiceTurnRouteHold";
 import { primeVoicePlaybackContext } from "../voice/voicePlayback";
+import { VoicePcmStreamPlayer } from "../voice/voicePcmStream";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -1277,8 +1278,7 @@ function ChatViewContent(props: ChatViewProps) {
   const voiceRouteThreadKeyRef = useRef(routeThreadKey);
   const voiceRequestAbortRef = useRef<AbortController | null>(null);
   const voicePlaybackContextRef = useRef<AudioContext | null>(null);
-  const voicePlaybackSourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const voicePlaybackTailRef = useRef<Promise<void>>(Promise.resolve());
+  const voicePcmStreamPlayerRef = useRef<VoicePcmStreamPlayer | null>(null);
   const voicePendingPlaybackCountRef = useRef(0);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
@@ -4901,18 +4901,8 @@ function ChatViewContent(props: ChatViewProps) {
   const stopVoiceOutput = useCallback(() => {
     voiceRequestAbortRef.current?.abort();
     voiceRequestAbortRef.current = null;
-    const source = voicePlaybackSourceRef.current;
-    voicePlaybackSourceRef.current = null;
-    voicePlaybackTailRef.current = Promise.resolve();
+    voicePcmStreamPlayerRef.current?.stop();
     voicePendingPlaybackCountRef.current = 0;
-    if (source) {
-      try {
-        source.stop();
-      } catch {
-        // It may already have ended.
-      }
-      source.disconnect();
-    }
   }, []);
 
   const cancelVoiceTurn = useCallback(() => {
@@ -5114,7 +5104,7 @@ function ChatViewContent(props: ChatViewProps) {
     setVoicePhase("speaking");
     let queuedForPlayback = false;
     void (async () => {
-      const wav = await synthesizeVoiceReply({
+      const audio = await synthesizeVoiceReplyStream({
         httpBaseUrl: environmentHttpBaseUrl,
         text: speechText,
         signal: controller.signal,
@@ -5131,7 +5121,6 @@ function ChatViewContent(props: ChatViewProps) {
       if (!context || context.state === "closed") {
         throw new Error("Voice playback was not unlocked. Tap the microphone and try again.");
       }
-      const audioBuffer = await context.decodeAudioData(await wav.arrayBuffer());
       if (
         controller.signal.aborted ||
         voiceEpochRef.current !== voiceEpoch ||
@@ -5140,43 +5129,16 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
-      const previousPlayback = voicePlaybackTailRef.current;
-      const playback = previousPlayback.then(async () => {
-        if (
-          controller.signal.aborted ||
-          voiceEpochRef.current !== voiceEpoch ||
-          voiceRouteThreadKeyRef.current !== pendingVoiceTurn.routeThreadKey
-        ) {
-          return;
-        }
-        await context.resume();
-
-        await new Promise<void>((resolve, reject) => {
-          const source = context.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(context.destination);
-          voicePlaybackSourceRef.current = source;
-          source.addEventListener(
-            "ended",
-            () => {
-              if (voicePlaybackSourceRef.current === source) {
-                voicePlaybackSourceRef.current = null;
-              }
-              source.disconnect();
-              resolve();
-            },
-            { once: true },
-          );
-          try {
-            source.start();
-          } catch (error) {
-            if (voicePlaybackSourceRef.current === source) {
-              voicePlaybackSourceRef.current = null;
-            }
-            source.disconnect();
-            reject(error);
-          }
-        });
+      const player = voicePcmStreamPlayerRef.current ?? new VoicePcmStreamPlayer(context);
+      voicePcmStreamPlayerRef.current = player;
+      const { playback } = await player.enqueue({
+        backend: audio.backend,
+        body: audio.body,
+        sampleRate: audio.sampleRate,
+        signal: controller.signal,
+        shouldContinue: () =>
+          voiceEpochRef.current === voiceEpoch &&
+          voiceRouteThreadKeyRef.current === pendingVoiceTurn.routeThreadKey,
       });
       voicePendingPlaybackCountRef.current += 1;
       const trackedPlayback = playback.finally(() => {
@@ -5188,7 +5150,6 @@ function ChatViewContent(props: ChatViewProps) {
           setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
         }
       });
-      voicePlaybackTailRef.current = trackedPlayback.catch(() => {});
       queuedForPlayback = true;
       if (voiceRequestAbortRef.current === controller) {
         voiceRequestAbortRef.current = null;

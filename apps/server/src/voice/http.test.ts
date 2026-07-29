@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  encodePcm16Wav,
-  fetchModelGateway,
-  isSupportedVoiceBackend,
-  resolveModelGatewayConfig,
-} from "./http.ts";
+import { fetchModelGateway, isSupportedVoiceBackend, resolveModelGatewayConfig } from "./http.ts";
 
 describe("backend-voice model gateway proxy", () => {
   it("accepts only authenticated loopback HTTP gateways", () => {
@@ -60,27 +55,6 @@ describe("backend-voice model gateway proxy", () => {
     expect(headers.get("x-api-key")).toBeNull();
     expect(request.init?.body).toBe(wav);
     expect(request.init?.signal).toBeInstanceOf(AbortSignal);
-  });
-
-  it("wraps little-endian mono PCM16 in a browser-decodable WAV", () => {
-    const pcm = new Uint8Array([0, 0, 1, 0, 255, 127, 0, 128]);
-    const wav = encodePcm16Wav(pcm, 24_000, 1);
-    expect(wav).not.toBeNull();
-    const view = new DataView(wav!.buffer, wav!.byteOffset, wav!.byteLength);
-    expect(new TextDecoder().decode(wav!.slice(0, 4))).toBe("RIFF");
-    expect(new TextDecoder().decode(wav!.slice(8, 12))).toBe("WAVE");
-    expect(view.getUint32(4, true)).toBe(wav!.byteLength - 8);
-    expect(view.getUint16(20, true)).toBe(1);
-    expect(view.getUint16(22, true)).toBe(1);
-    expect(view.getUint32(24, true)).toBe(24_000);
-    expect(view.getUint32(28, true)).toBe(48_000);
-    expect(view.getUint16(32, true)).toBe(2);
-    expect(view.getUint16(34, true)).toBe(16);
-    expect(view.getUint32(40, true)).toBe(pcm.byteLength);
-    expect(wav!.slice(44)).toEqual(pcm);
-    expect(encodePcm16Wav(new Uint8Array([0]), 24_000, 1)).toBeNull();
-    expect(encodePcm16Wav(pcm, 0, 1)).toBeNull();
-    expect(encodePcm16Wav(pcm, 24_000, 2)).toBeNull();
   });
 });
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   normalizeAssistantTextForSpeech,
-  synthesizeVoiceReply,
+  synthesizeVoiceReplyStream,
   type VoiceFetch,
 } from "./voiceClient";
 import { getVoiceSynthesisSettings, voiceBackendOptions } from "./voiceSettings";
@@ -23,12 +23,16 @@ describe("backend-voice browser contract", () => {
     let request: RequestInit | undefined;
     const fetchImplementation: VoiceFetch = async (_input, init) => {
       request = init;
-      return new Response(new Uint8Array([82, 73, 70, 70]), {
-        headers: { "content-type": "audio/wav" },
+      return new Response(new Uint8Array([0, 0]), {
+        headers: {
+          "content-type": "audio/L16",
+          "x-audio-channels": "1",
+          "x-audio-sample-rate": "24000",
+        },
       });
     };
 
-    await synthesizeVoiceReply({
+    await synthesizeVoiceReplyStream({
       httpBaseUrl: "http://localhost:3773",
       text: "reply",
       fetchImplementation,

@@ -40,12 +40,18 @@ export async function transcribeVoiceWav(input: {
   return text;
 }
 
-export async function synthesizeVoiceReply(input: {
+export type VoiceReplyPcmStream = {
+  readonly backend: string;
+  readonly body: ReadableStream<Uint8Array>;
+  readonly channels: 1;
+  readonly sampleRate: number;
+};
+export async function synthesizeVoiceReplyStream(input: {
   readonly httpBaseUrl: string;
   readonly text: string;
   readonly signal?: AbortSignal;
   readonly fetchImplementation?: VoiceFetch;
-}): Promise<Blob> {
+}): Promise<VoiceReplyPcmStream> {
   const settings = getVoiceSynthesisSettings();
   const fetchImplementation = input.fetchImplementation ?? fetch;
   const response = await fetchImplementation(
@@ -59,11 +65,20 @@ export async function synthesizeVoiceReply(input: {
     },
   );
   if (!response.ok) throw await responseError(response, "Local speech synthesis failed.");
-  const audio = await response.blob();
-  if (!audio.type.startsWith("audio/wav") || audio.size === 0) {
-    throw new Error("Local speech synthesis returned invalid audio.");
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.toLowerCase();
+  const sampleRate = Number(response.headers.get("x-audio-sample-rate"));
+  const channels = Number(response.headers.get("x-audio-channels"));
+  if (
+    contentType !== "audio/l16" ||
+    !response.body ||
+    !Number.isInteger(sampleRate) ||
+    sampleRate < 8_000 ||
+    sampleRate > 96_000 ||
+    channels !== 1
+  ) {
+    throw new Error("Local speech synthesis returned an invalid PCM stream.");
   }
-  return audio;
+  return { backend: settings.backend, body: response.body, channels: 1, sampleRate };
 }
 
 export function normalizeAssistantTextForSpeech(text: string): string {

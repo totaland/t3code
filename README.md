@@ -57,10 +57,12 @@ T3 Code can proxy microphone audio to the loopback-only `backend-voice` model
 gateway. The browser records a push-to-talk WAV, T3 sends the transcript as the
 current agent turn, then synthesizes and queues completed sentences while the
 reply streams. Any final incomplete sentence is spoken when the message
-completes. T3 wraps the gateway's raw PCM16 stream in a browser-playable WAV.
-The composer selector exposes `Auto`, `Qwen3-TTS`, `Kokoro`, and
-`Step-Audio-EditX`; Step uses the trusted server-side James reference and never
-accepts an arbitrary client voice path.
+completes. T3 proxies the gateway's PCM16 body as a real-time stream, and the
+browser schedules small PCM buffers on one audio timeline so playback starts
+before synthesis finishes. The composer selector exposes `Auto`, `Qwen3-TTS`,
+`Kokoro`, and `Step-Audio-EditX`; Step uses the trusted server-side James
+reference, remains full-buffer at the model layer, and never accepts an
+arbitrary client voice path.
 
 Configure the T3 server, not the browser:
 
