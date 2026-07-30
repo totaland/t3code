@@ -138,4 +138,25 @@ describe("voice turn correlation", () => {
       status: "empty",
     });
   });
+
+  it("splits a long completed reply into synthesizable chunks", () => {
+    const text = `${"A long story sentence. ".repeat(80)}the ending.`;
+    const messages = [
+      { id: "voice-user", role: "user", text: "tell me a story", turnId: null, streaming: false },
+      { id: "story", role: "assistant", text, turnId: "turn-voice", streaming: false },
+    ];
+    const spoken = new Map<string, number>();
+
+    const first = resolveVoiceTurnResponse(messages, "voice-user", false, spoken);
+    expect(first.status).toBe("ready");
+    if (first.status !== "ready") return;
+    expect(first.text.length).toBeLessThanOrEqual(500);
+    spoken.set(first.messageId, first.text.length);
+
+    const second = resolveVoiceTurnResponse(messages, "voice-user", false, spoken);
+    expect(second.status).toBe("ready");
+    if (second.status !== "ready") return;
+    expect(second.text.length).toBeLessThanOrEqual(500);
+    expect(first.text + second.text).toBe(text.slice(0, first.text.length + second.text.length));
+  });
 });

@@ -94,6 +94,27 @@ export function normalizeAssistantTextForSpeech(text: string): string {
     .slice(0, 1_500);
 }
 
+// Step-Audio-EditX can OOM on this GPU with otherwise valid 900+ character
+// requests. Keep the client chunks small; long replies are still queued in order.
+const MAX_VOICE_SPEECH_CHUNK_LENGTH = 500;
+
+function boundVoiceSpeechChunk(text: string): string {
+  if (text.length <= MAX_VOICE_SPEECH_CHUNK_LENGTH) return text;
+
+  const limitedText = text.slice(0, MAX_VOICE_SPEECH_CHUNK_LENGTH);
+  const sentenceBoundaries = [...limitedText.matchAll(/[.!?](?:\s+|$)|\n+/gu)];
+  const lastSentenceBoundary = sentenceBoundaries.at(-1);
+  const sentenceEnd = lastSentenceBoundary
+    ? lastSentenceBoundary.index! + lastSentenceBoundary[0].length
+    : 0;
+  if (sentenceEnd >= MAX_VOICE_SPEECH_CHUNK_LENGTH * 0.6) {
+    return limitedText.slice(0, sentenceEnd);
+  }
+
+  const lastWhitespace = limitedText.lastIndexOf(" ");
+  return limitedText.slice(0, lastWhitespace > 0 ? lastWhitespace + 1 : limitedText.length);
+}
+
 export type VoiceTurnMessage = {
   readonly id: string;
   readonly role: string;
@@ -148,13 +169,16 @@ export function nextAssistantSpeechChunkForVoiceTurn(
 
     const remainingText = message.text.slice(spokenOffset);
     if (!message.streaming) {
-      return { messageId: message.id, text: remainingText };
+      return { messageId: message.id, text: boundVoiceSpeechChunk(remainingText) };
     }
 
     const sentenceBoundary = /[.!?](?:\s+|$)|\n+/u.exec(remainingText);
     if (sentenceBoundary) {
       const chunkEnd = sentenceBoundary.index + sentenceBoundary[0].length;
-      return { messageId: message.id, text: remainingText.slice(0, chunkEnd) };
+      return {
+        messageId: message.id,
+        text: boundVoiceSpeechChunk(remainingText.slice(0, chunkEnd)),
+      };
     }
   }
   return null;
