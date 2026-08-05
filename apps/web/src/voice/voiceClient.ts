@@ -180,18 +180,6 @@ export function nextAssistantSpeechChunkForVoiceTurn(
         text: boundVoiceSpeechChunk(remainingText.slice(0, chunkEnd)),
       };
     }
-
-    let completeWords = 0;
-    for (const match of remainingText.matchAll(/\S+\s+/gu)) {
-      completeWords += 1;
-      const chunkEnd = match.index + match[0].length;
-      if (completeWords >= 5 && chunkEnd >= 24) {
-        return {
-          messageId: message.id,
-          text: boundVoiceSpeechChunk(remainingText.slice(0, chunkEnd)),
-        };
-      }
-    }
   }
   return null;
 }
