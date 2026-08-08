@@ -90,12 +90,25 @@ export async function fetchModelGateway(
   });
 }
 
-async function requestTranscription(config: ModelGatewayConfig, wav: Uint8Array) {
-  const response = await fetchModelGateway(config, "/v1/stt", {
-    method: "POST",
-    headers: { "content-type": "audio/wav" },
-    body: wav,
-  });
+export async function requestTranscription(
+  config: ModelGatewayConfig,
+  wav: Uint8Array,
+  replyBackend: string,
+  fetchImplementation: VoiceFetch = fetch,
+) {
+  const response = await fetchModelGateway(
+    config,
+    "/v1/stt",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "audio/wav",
+        "x-tts-backend": replyBackend,
+      },
+      body: wav,
+    },
+    fetchImplementation,
+  );
   const payload: unknown = response.ok ? await response.json() : null;
   return { response, payload };
 }
@@ -185,8 +198,12 @@ const transcribeRouteLayer = HttpRouter.add(
         status: wav.byteLength === 0 ? 422 : 413,
       });
     }
+    const replyBackend = request.headers["x-tts-backend"]?.trim().toLowerCase() ?? "auto";
+    if (!isSupportedVoiceBackend(replyBackend)) {
+      return HttpServerResponse.text("Unknown voice backend.", { status: 422 });
+    }
     const upstream = yield* Effect.tryPromise({
-      try: () => requestTranscription(gateway, wav),
+      try: () => requestTranscription(gateway, wav, replyBackend),
       catch: (cause) => new VoiceProxyError({ cause }),
     }).pipe(Effect.option);
     if (upstream._tag === "None") {

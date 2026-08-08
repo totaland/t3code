@@ -27,6 +27,7 @@ describe("local voice client", () => {
     expect(requests[0]?.url).toBe("http://127.0.0.1:3773/api/voice/transcribe");
     expect(requests[0]?.init?.credentials).toBe("include");
     expect(requests[0]?.init?.body).toBe(wav);
+    expect(new Headers(requests[0]?.init?.headers).get("x-tts-backend")).toBe("auto");
   });
 
   it("rejects invalid streaming audio metadata", async () => {

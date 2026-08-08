@@ -66,6 +66,7 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { useEnvironmentHttpBaseUrl } from "../../state/environments";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { resolveShortcutCommand } from "../../keybindings";
 import {
@@ -171,6 +172,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { ComposerVoiceInputButton, type VoiceTurnPhase } from "./ComposerVoiceInputButton";
 import { ComposerVoiceEnginePicker } from "./ComposerVoiceEnginePicker";
+import { ComposerVoiceWakePhraseButton } from "./ComposerVoiceWakePhraseButton";
 import {
   BotIcon,
   CircleAlertIcon,
@@ -590,7 +592,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
-  onVoiceCapture: (wav: Blob) => Promise<void>;
+  onVoiceCapture: (input: Blob | string) => Promise<void>;
   onVoicePlaybackUnlock: () => Promise<unknown>;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -701,6 +703,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
   } = props;
   const isSendDisabled = sendDisabledReason !== null;
+  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
 
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -3214,6 +3217,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
                 <ComposerVoiceEnginePicker />
+                <ComposerVoiceWakePhraseButton
+                  disabled={
+                    isConnecting ||
+                    isComposerApprovalState ||
+                    pendingUserInputs.length > 0 ||
+                    projectSelectionRequired ||
+                    environmentUnavailable !== null ||
+                    noProviderAvailable ||
+                    prompt.trim().length > 0
+                  }
+                  httpBaseUrl={environmentHttpBaseUrl}
+                  onInterrupt={onInterrupt}
+                  phase={voicePhase}
+                  onTranscript={onVoiceCapture}
+                />
                 <ComposerVoiceInputButton
                   disabled={
                     isConnecting ||

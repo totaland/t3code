@@ -74,6 +74,19 @@ before synthesis finishes. The composer selector exposes `Auto`, `Qwen3-TTS`,
 reference, remains full-buffer at the model layer, and never accepts an
 arbitrary client voice path.
 
+For hands-free conversation, allow microphone access and say **“Hey Mai.”**
+Keep speaking naturally: a brief trailing pause submits the command without a
+button press. T3 resumes listening while the turn runs, so follow-up commands do
+not require the wake phrase and speaking over Mai interrupts the current reply.
+Say **“go to sleep”** or press <kbd>Esc</kbd> to return to visibly sleeping,
+wake-only listening. The waveform button can disable
+wake listening completely, and the manual push-to-talk microphone remains
+available. On iPhone browsers, where continuous WebKit speech recognition is
+unreliable, T3 uses the existing Whisper endpoint plus local silence detection.
+Desktop Chrome uses that same local pipeline; native browser speech recognition
+is only a fallback when Web Audio microphone capture is unavailable.
+Other supported browsers use their speech-recognition service.
+
 Configure the T3 server, not the browser:
 
 ```dotenv

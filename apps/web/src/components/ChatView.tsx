@@ -5018,7 +5018,9 @@ function ChatViewContent(props: ChatViewProps) {
     return next;
   }, []);
 
-  const onVoiceCapture = async (wav: Blob): Promise<void> => {
+  const runVoiceTurn = async (
+    resolveTranscript: (signal: AbortSignal) => Promise<string>,
+  ): Promise<void> => {
     if (promptRef.current.trim().length > 0) {
       toastManager.add({
         type: "warning",
@@ -5043,9 +5045,9 @@ function ChatViewContent(props: ChatViewProps) {
     const voiceRouteThreadKey = routeThreadKey;
     setVoicePhase("transcribing");
     try {
-      // Created/resumed from the stop-recording click so delayed reply playback
-      // remains allowed by mobile browser autoplay policies.
-      await ensureVoicePlaybackContext();
+      // Wake-driven turns may not originate from a browser gesture. Prime
+      // playback when possible, but never block command submission on autoplay.
+      await ensureVoicePlaybackContext().catch(() => undefined);
       if (
         voiceEpochRef.current !== voiceEpoch ||
         voiceRouteThreadKeyRef.current !== voiceRouteThreadKey
@@ -5055,11 +5057,7 @@ function ChatViewContent(props: ChatViewProps) {
 
       const controller = new AbortController();
       voiceRequestAbortRef.current = controller;
-      const transcript = await transcribeVoiceWav({
-        httpBaseUrl: environmentHttpBaseUrl,
-        wav,
-        signal: controller.signal,
-      });
+      const transcript = (await resolveTranscript(controller.signal)).trim();
       if (
         controller.signal.aborted ||
         voiceEpochRef.current !== voiceEpoch ||
@@ -5069,6 +5067,9 @@ function ChatViewContent(props: ChatViewProps) {
       }
       if (voiceRequestAbortRef.current === controller) {
         voiceRequestAbortRef.current = null;
+      }
+      if (transcript.length === 0) {
+        throw new Error("No speech was detected.");
       }
 
       beginVoiceTurnRouteHold(voiceRouteThreadKey);
@@ -5098,7 +5099,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (!aborted) {
         toastManager.add({
           type: "error",
-          title: "Local voice turn failed",
+          title: "Voice turn failed",
           description: chatActionErrorMessage(error),
         });
       }
@@ -5108,6 +5109,17 @@ function ChatViewContent(props: ChatViewProps) {
       setVoicePhase("idle");
     }
   };
+
+  const onVoiceCapture = (input: Blob | string): Promise<void> =>
+    typeof input === "string"
+      ? runVoiceTurn(async () => input)
+      : runVoiceTurn((signal) =>
+          transcribeVoiceWav({
+            httpBaseUrl: environmentHttpBaseUrl!,
+            wav: input,
+            signal,
+          }),
+        );
 
   useEffect(() => {
     const pendingVoiceTurn = pendingVoiceTurnRef.current;
@@ -5246,9 +5258,14 @@ function ChatViewContent(props: ChatViewProps) {
       if (voiceRequestAbortRef.current === controller) {
         voiceRequestAbortRef.current = null;
       }
-      setVoicePhase("waiting");
-      setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
-      await trackedPlayback;
+      try {
+        await trackedPlayback;
+      } finally {
+        if (voiceEpochRef.current === voiceEpoch) {
+          setVoicePhase("waiting");
+          setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
+        }
+      }
     })()
       .catch((error: unknown) => {
         if (!controller.signal.aborted && voiceEpochRef.current === voiceEpoch) {

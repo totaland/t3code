@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { fetchModelGateway, isSupportedVoiceBackend, resolveModelGatewayConfig } from "./http.ts";
+import {
+  fetchModelGateway,
+  isSupportedVoiceBackend,
+  requestTranscription,
+  resolveModelGatewayConfig,
+} from "./http.ts";
 
 describe("backend-voice model gateway proxy", () => {
   it("accepts only authenticated loopback HTTP gateways", () => {
@@ -55,6 +60,30 @@ describe("backend-voice model gateway proxy", () => {
     expect(headers.get("x-api-key")).toBeNull();
     expect(request.init?.body).toBe(wav);
     expect(request.init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("forwards the selected reply backend with transcription", async () => {
+    const gateway = resolveModelGatewayConfig({
+      modelGatewayUrl: "http://localhost:8091",
+      modelGatewayApiKey: "local-test-key-123456",
+    });
+    expect(gateway).not.toBeNull();
+    const requests: Array<{ input: URL; init: RequestInit | undefined }> = [];
+    const fetchImplementation = async (input: URL, init?: RequestInit) => {
+      requests.push({ input, init });
+      return Response.json({ text: "hello" });
+    };
+
+    await requestTranscription(
+      gateway!,
+      new Uint8Array([82, 73, 70, 70]),
+      "step_audio_editx",
+      fetchImplementation,
+    );
+
+    const headers = new Headers(requests[0]?.init?.headers);
+    expect(headers.get("x-tts-backend")).toBe("step_audio_editx");
+    expect(headers.get("authorization")).toBe("Bearer local-test-key-123456");
   });
 });
 

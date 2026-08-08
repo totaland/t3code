@@ -16,6 +16,7 @@ export async function transcribeVoiceWav(input: {
   readonly signal?: AbortSignal;
   readonly fetchImplementation?: VoiceFetch;
 }): Promise<string> {
+  const settings = getVoiceSynthesisSettings();
   const fetchImplementation = input.fetchImplementation ?? fetch;
   const response = await fetchImplementation(
     voiceEndpoint(input.httpBaseUrl, "/api/voice/transcribe"),
@@ -23,7 +24,10 @@ export async function transcribeVoiceWav(input: {
       method: "POST",
       body: input.wav,
       credentials: "include",
-      headers: { "content-type": "audio/wav" },
+      headers: {
+        "content-type": "audio/wav",
+        "x-tts-backend": settings.backend,
+      },
       ...(input.signal ? { signal: input.signal } : {}),
     },
   );

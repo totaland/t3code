@@ -39,12 +39,12 @@ function setCaptureState(next: CaptureState) {
   emitCaptureState();
 }
 
-function subscribeCaptureState(listener: () => void) {
+export function subscribeCaptureState(listener: () => void) {
   captureListeners.add(listener);
   return () => captureListeners.delete(listener);
 }
 
-function getCaptureState() {
+export function getCaptureState() {
   return captureState;
 }
 
@@ -146,8 +146,8 @@ async function startActiveCapture(onCapture: (wav: Blob) => Promise<void>) {
         noiseSuppression: true,
       },
     });
-    const resumePromise = audioContext.resume();
-    [stream] = await Promise.all([streamPromise, resumePromise]);
+    void audioContext.resume().catch(() => undefined);
+    stream = await streamPromise;
     if (getCaptureState() !== "starting") {
       for (const track of stream.getTracks()) track.stop();
       void audioContext.close();
