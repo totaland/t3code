@@ -102,8 +102,8 @@ describe("voice wake phrase", () => {
     ).toBe("speech-recognition");
   });
 
-  it("enables wake listening by default until the user explicitly disables it", () => {
-    expect(resolveVoiceWakePhraseEnabledPreference(null)).toBe(true);
+  it("keeps wake listening off until the user explicitly enables it", () => {
+    expect(resolveVoiceWakePhraseEnabledPreference(null)).toBe(false);
     expect(resolveVoiceWakePhraseEnabledPreference("true")).toBe(true);
     expect(resolveVoiceWakePhraseEnabledPreference("false")).toBe(false);
   });
@@ -175,6 +175,48 @@ describe("voice wake phrase", () => {
     expect(onCommand).toHaveBeenCalledTimes(2);
   });
 
+  it("ignores duplicate final results while a voice command is pending", () => {
+    FakeSpeechRecognition.instances = [];
+    const onCommand = vi.fn(() => new Promise<void>(() => {}));
+    const listener = createVoiceWakePhraseListener({
+      recognitionConstructor: FakeSpeechRecognition as SpeechRecognitionConstructor,
+      onCommand,
+    });
+
+    listener?.start();
+    const recognition = FakeSpeechRecognition.instances[0]!;
+    recognition.emitTranscript("Hey Mai", true);
+    recognition.emitTranscript("Thank you.", true);
+    recognition.emitTranscript("Thank you.", true);
+
+    expect(onCommand).toHaveBeenCalledOnce();
+  });
+
+  it("stays paused when externally paused during a pending voice command", async () => {
+    FakeSpeechRecognition.instances = [];
+    let finishCommand!: () => void;
+    const commandFinished = new Promise<void>((resolve) => {
+      finishCommand = resolve;
+    });
+    const listener = createVoiceWakePhraseListener({
+      recognitionConstructor: FakeSpeechRecognition as SpeechRecognitionConstructor,
+      onCommand: vi.fn(() => commandFinished),
+    });
+
+    listener?.start();
+    const recognition = FakeSpeechRecognition.instances[0]!;
+    recognition.emitTranscript("Hey Mai", true);
+    recognition.emitTranscript("open the current thread", true);
+    listener?.pause();
+
+    finishCommand();
+    await commandFinished;
+    await Promise.resolve();
+    expect(FakeSpeechRecognition.instances).toHaveLength(1);
+
+    listener?.resume();
+    expect(FakeSpeechRecognition.instances).toHaveLength(2);
+  });
   it("returns to wake-only listening for go to sleep or Escape", () => {
     FakeSpeechRecognition.instances = [];
     const onCommand = vi.fn();

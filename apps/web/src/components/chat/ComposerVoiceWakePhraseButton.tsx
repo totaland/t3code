@@ -64,7 +64,7 @@ export function ComposerVoiceWakePhraseButton(props: {
     try {
       setEnabled(resolveVoiceWakePhraseEnabledPreference(window.localStorage.getItem(STORAGE_KEY)));
     } catch {
-      setEnabled(true);
+      setEnabled(false);
     }
   }, [supported]);
 
@@ -139,12 +139,12 @@ export function ComposerVoiceWakePhraseButton(props: {
   useEffect(() => {
     const listener = listenerRef.current;
     if (!listener) return;
-    if (captureState === "idle" && !props.disabled) {
+    if (captureState === "idle" && !props.disabled && props.phase === "idle") {
       listener.resume();
     } else {
       listener.pause();
     }
-  }, [captureState, enabled, props.disabled]);
+  }, [captureState, enabled, props.disabled, props.phase]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -183,10 +183,10 @@ export function ComposerVoiceWakePhraseButton(props: {
           <Button
             type="button"
             variant="ghost"
-            size={awake || sleeping ? "sm" : "icon-sm"}
+            size="icon-sm"
             className={
               enabled
-                ? "relative shrink-0 gap-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
+                ? "relative shrink-0 rounded-full bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
                 : "relative shrink-0 rounded-full text-muted-foreground/70 hover:text-foreground"
             }
             disabled={!supported || (props.disabled && !enabled)}
@@ -221,11 +221,6 @@ export function ComposerVoiceWakePhraseButton(props: {
         <AudioLinesIcon
           className={listenerState === "listening" || awake ? "animate-pulse" : undefined}
         />
-        {awake || sleeping ? (
-          <span aria-live="polite" className="max-w-36 truncate text-xs">
-            {sleeping ? "Sleeping" : liveTranscript || "Listening…"}
-          </span>
-        ) : null}
       </TooltipTrigger>
       <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>

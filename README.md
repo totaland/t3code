@@ -74,10 +74,11 @@ before synthesis finishes. The composer selector exposes `Auto`, `Qwen3-TTS`,
 reference, remains full-buffer at the model layer, and never accepts an
 arbitrary client voice path.
 
-For hands-free conversation, allow microphone access and say **“Hey Mai.”**
-Keep speaking naturally: a brief trailing pause submits the command without a
-button press. T3 resumes listening while the turn runs, so follow-up commands do
-not require the wake phrase and speaking over Mai interrupts the current reply.
+Hands-free listening is off by default. Turn on the waveform button, allow
+microphone access, then say **“Hey Mai.”** Keep speaking naturally: a brief
+trailing pause submits the command without a button press. T3 resumes listening
+while the turn runs, so follow-up commands do not require the wake phrase and
+speaking over Mai interrupts the current reply.
 Say **“go to sleep”** or press <kbd>Esc</kbd> to return to visibly sleeping,
 wake-only listening. The waveform button can disable
 wake listening completely, and the manual push-to-talk microphone remains

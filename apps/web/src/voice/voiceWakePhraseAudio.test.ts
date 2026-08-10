@@ -36,11 +36,14 @@ class FakeAudioContext {
   }));
 }
 
-function emitAudio(peak: number) {
-  const samples = new Float32Array(4_096).fill(peak);
+function emitAudioSamples(samples: Float32Array) {
   FakeAudioContext.processor.onaudioprocess?.({
     inputBuffer: { getChannelData: () => samples },
   } as unknown as AudioProcessingEvent);
+}
+
+function emitAudio(peak: number) {
+  emitAudioSamples(new Float32Array(4_096).fill(peak));
 }
 
 describe("local audio wake phrase", () => {
@@ -109,6 +112,95 @@ describe("local audio wake phrase", () => {
     expect(getUserMedia).toHaveBeenCalledOnce();
   });
 
+  it("ignores a transient noise spike instead of sending a hallucinated transcript", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const onCommand = vi.fn();
+    const onWake = vi.fn();
+    const transcripts = ["Hey Mai", "Thank you."];
+    const onTranscribe = vi.fn(async () => transcripts.shift() ?? "");
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe,
+      onCommand,
+      onWake,
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+    emitAudio(0.1);
+    scheduled.shift()?.();
+    await vi.waitFor(() => expect(onWake).toHaveBeenCalledOnce());
+
+    const spike = new Float32Array(4_096);
+    spike[0] = 0.1;
+    emitAudioSamples(spike);
+    emitAudio(0);
+    emitAudio(0);
+    emitAudio(0);
+
+    expect(onTranscribe).toHaveBeenCalledOnce();
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
+  it("stays paused when externally paused during a pending local command", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const states: VoiceWakePhraseState[] = [];
+    let finishCommand!: () => void;
+    const commandFinished = new Promise<void>((resolve) => {
+      finishCommand = resolve;
+    });
+    const transcripts = ["Hey Mai", "open the current thread"];
+    const onTranscribe = vi.fn(async () => transcripts.shift() ?? "");
+    const onCommand = vi.fn(() => commandFinished);
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe,
+      onCommand,
+      onStateChange: (state) => states.push(state),
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+    emitAudio(0.1);
+    scheduled.shift()?.();
+    await vi.waitFor(() => expect(states.at(-1)).toBe("awake"));
+
+    emitAudio(0.1);
+    emitAudio(0);
+    emitAudio(0);
+    emitAudio(0);
+    await vi.waitFor(() => expect(onCommand).toHaveBeenCalledOnce());
+    listener?.pause();
+
+    finishCommand();
+    await commandFinished;
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(states.at(-1)).toBe("paused");
+    expect(onTranscribe).toHaveBeenCalledTimes(2);
+
+    listener?.resume();
+    await vi.waitFor(() => expect(states.at(-1)).toBe("awake"));
+  });
   it("goes back to wake-only listening without sending the sleep phrase", async () => {
     FakeAudioContext.rejectResume = false;
     const scheduled: Array<() => void> = [];

@@ -34,7 +34,7 @@ type LocalAudioSession = {
   readonly resumeOnInteraction: () => void;
   audibleGeneration: number;
   frameCount: number;
-  peak: number;
+  maxRms: number;
   probeTimer: unknown | null;
   silenceFrames: number;
   speechStarted: boolean;
@@ -45,7 +45,7 @@ const PROBE_INTERVAL_MS = 2_500;
 const WAKE_AUDIO_WINDOW_MS = 5_000;
 const COMMAND_AUDIO_WINDOW_MS = 30_000;
 const COMMAND_SILENCE_MS = 650;
-const MIN_AUDIBLE_PEAK = 0.012;
+const MIN_AUDIBLE_RMS = 0.006;
 
 function defaultAudioContextConstructor(): AudioContextConstructor | null {
   return typeof AudioContext === "undefined" ? null : AudioContext;
@@ -92,7 +92,7 @@ export function createLocalAudioWakePhraseListener(
   const resetAudio = (target: LocalAudioSession) => {
     target.chunks.length = 0;
     target.frameCount = 0;
-    target.peak = 0;
+    target.maxRms = 0;
     target.silenceFrames = 0;
     target.speechStarted = false;
     target.transcribing = false;
@@ -207,8 +207,8 @@ export function createLocalAudioWakePhraseListener(
 
   const probe = async (target: LocalAudioSession) => {
     if (session !== target || !enabled || paused || awake || target.transcribing) return;
-    const shouldProbe = target.chunks.length > 0 && target.peak >= MIN_AUDIBLE_PEAK;
-    target.peak = 0;
+    const shouldProbe = target.chunks.length > 0 && target.maxRms >= MIN_AUDIBLE_RMS;
+    target.maxRms = 0;
     if (!shouldProbe) {
       scheduleProbe(target);
       return;
@@ -291,7 +291,7 @@ export function createLocalAudioWakePhraseListener(
         sampleRate: context.sampleRate,
         chunks: [],
         frameCount: 0,
-        peak: 0,
+        maxRms: 0,
         probeTimer: null,
         silenceFrames: 0,
         speechStarted: false,
@@ -303,13 +303,14 @@ export function createLocalAudioWakePhraseListener(
       processor.onaudioprocess = (event) => {
         if (paused) return;
         const chunk = new Float32Array(event.inputBuffer.getChannelData(0));
-        let chunkPeak = 0;
-        for (const sample of chunk) chunkPeak = Math.max(chunkPeak, Math.abs(sample));
+        let squaredAmplitude = 0;
+        for (const sample of chunk) squaredAmplitude += sample * sample;
+        const chunkRms = Math.sqrt(squaredAmplitude / chunk.length);
 
         target.chunks.push(chunk);
         target.frameCount += chunk.length;
-        target.peak = Math.max(target.peak, chunkPeak);
-        if (chunkPeak >= MIN_AUDIBLE_PEAK) {
+        target.maxRms = Math.max(target.maxRms, chunkRms);
+        if (chunkRms >= MIN_AUDIBLE_RMS) {
           if (awake && !target.speechStarted) input.onSpeechStart?.();
           target.audibleGeneration += 1;
           target.speechStarted = true;
@@ -381,7 +382,7 @@ export function createLocalAudioWakePhraseListener(
       emitState("off");
     },
     pause() {
-      if (!enabled || paused) return;
+      if (!enabled) return;
       paused = true;
       startGeneration += 1;
       if (session) {

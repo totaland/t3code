@@ -101,7 +101,7 @@ function isMobileBrowser(): boolean {
 }
 
 export function resolveVoiceWakePhraseEnabledPreference(stored: string | null): boolean {
-  return stored !== "false";
+  return stored === "true";
 }
 
 export function getVoiceWakePhraseMode(): VoiceWakePhraseMode {
@@ -202,6 +202,7 @@ export function createVoiceWakePhraseListener(
       if (awake) input.onSpeechStart?.();
     };
     next.onresult = (event) => {
+      if (paused || recognition !== next) return;
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const result = event.results[index];
         const transcript = result?.[0]?.transcript;
@@ -318,7 +319,7 @@ export function createVoiceWakePhraseListener(
       emitState("off");
     },
     pause() {
-      if (!enabled || paused) return;
+      if (!enabled) return;
       paused = true;
       authorizationGeneration += 1;
       clearRestart();
