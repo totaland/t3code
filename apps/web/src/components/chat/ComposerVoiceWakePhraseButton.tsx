@@ -1,13 +1,8 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AudioLinesIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import {
-  getCaptureState,
-  subscribeCaptureState,
-  type VoiceTurnPhase,
-} from "./ComposerVoiceInputButton";
 import {
   createVoiceWakePhraseListener,
   getVoiceWakePhraseMode,
@@ -19,6 +14,8 @@ import {
 } from "../../voice/voiceWakePhrase";
 import { createLocalAudioWakePhraseListener } from "../../voice/voiceWakePhraseAudio";
 import { transcribeVoiceWav } from "../../voice/voiceClient";
+
+export type VoiceTurnPhase = "idle" | "transcribing" | "waiting" | "speaking";
 
 const STORAGE_KEY = "t3.voice.wake-phrase-enabled.v4";
 
@@ -33,17 +30,14 @@ function writePreference(enabled: boolean) {
 export function ComposerVoiceWakePhraseButton(props: {
   readonly disabled?: boolean;
   readonly httpBaseUrl: string | null;
+  readonly onCaptureCancelled: () => void | Promise<void>;
   readonly onInterrupt: () => void | Promise<void>;
+  readonly onPlaybackUnlock: () => Promise<unknown>;
   readonly phase: VoiceTurnPhase;
   readonly onTranscript: (transcript: string) => Promise<void>;
 }) {
   const mode = getVoiceWakePhraseMode();
   const supported = mode !== "unsupported";
-  const captureState = useSyncExternalStore(
-    subscribeCaptureState,
-    getCaptureState,
-    getCaptureState,
-  );
   const [enabled, setEnabled] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [sleeping, setSleeping] = useState(false);
@@ -52,9 +46,11 @@ export function ComposerVoiceWakePhraseButton(props: {
   );
   const listenerRef = useRef<VoiceWakePhraseListener | null>(null);
   const bargeInPromiseRef = useRef<Promise<void> | null>(null);
+  const onCaptureCancelledRef = useRef(props.onCaptureCancelled);
   const onInterruptRef = useRef(props.onInterrupt);
   const onTranscriptRef = useRef(props.onTranscript);
   const phaseRef = useRef(props.phase);
+  onCaptureCancelledRef.current = props.onCaptureCancelled;
   onInterruptRef.current = props.onInterrupt;
   onTranscriptRef.current = props.onTranscript;
   phaseRef.current = props.phase;
@@ -70,9 +66,18 @@ export function ComposerVoiceWakePhraseButton(props: {
 
   useEffect(() => {
     if (!enabled || !supported) return;
+    const cancelPendingBargeIn = async () => {
+      const bargeIn = bargeInPromiseRef.current;
+      if (!bargeIn) return;
+      await bargeIn;
+      if (bargeInPromiseRef.current !== bargeIn) return;
+      bargeInPromiseRef.current = null;
+      await onCaptureCancelledRef.current();
+    };
     const onStateChange = (state: VoiceWakePhraseState) => {
       setListenerState(state);
       if (state !== "blocked") return;
+      void cancelPendingBargeIn();
       setEnabled(false);
       toastManager.add({
         type: "warning",
@@ -84,21 +89,29 @@ export function ComposerVoiceWakePhraseButton(props: {
     const listenerInput = {
       onCommand: async (transcript: string) => {
         const bargeIn = bargeInPromiseRef.current;
-        if (bargeIn) await bargeIn;
-        else if (phaseRef.current !== "idle") await onInterruptRef.current();
-        bargeInPromiseRef.current = null;
-        await onTranscriptRef.current(transcript);
+        try {
+          if (bargeIn) await bargeIn;
+          else if (phaseRef.current !== "idle") await onInterruptRef.current();
+          if (bargeInPromiseRef.current === bargeIn) {
+            bargeInPromiseRef.current = null;
+          }
+          await onTranscriptRef.current(transcript);
+        } catch {
+          await onCaptureCancelledRef.current();
+        }
       },
       onSleep: () => {
-        bargeInPromiseRef.current = null;
+        void cancelPendingBargeIn();
         setLiveTranscript("");
         setSleeping(true);
       },
       onSpeechStart: () => {
-        if (phaseRef.current === "idle" || bargeInPromiseRef.current) return;
+        const phase = phaseRef.current;
+        if (phase === "idle" || bargeInPromiseRef.current) return false;
         bargeInPromiseRef.current = Promise.resolve(onInterruptRef.current()).catch(
           () => undefined,
         );
+        return phase === "speaking";
       },
       onStateChange,
       onTranscript: setLiveTranscript,
@@ -112,15 +125,21 @@ export function ComposerVoiceWakePhraseButton(props: {
         ? createLocalAudioWakePhraseListener({
             ...listenerInput,
             onTranscribe: async (wav) => {
-              if (!props.httpBaseUrl) return "";
-              try {
-                return await transcribeVoiceWav({
-                  httpBaseUrl: props.httpBaseUrl,
-                  wav,
-                });
-              } catch {
-                return "";
+              let transcript = "";
+              if (props.httpBaseUrl) {
+                try {
+                  transcript = await transcribeVoiceWav({
+                    httpBaseUrl: props.httpBaseUrl,
+                    wav,
+                  });
+                } catch {
+                  transcript = "";
+                }
               }
+              if (transcript.trim().length === 0) {
+                await cancelPendingBargeIn();
+              }
+              return transcript;
             },
           })
         : createVoiceWakePhraseListener(listenerInput);
@@ -132,6 +151,7 @@ export function ComposerVoiceWakePhraseButton(props: {
     listener.start();
     return () => {
       listener.stop();
+      void cancelPendingBargeIn();
       if (listenerRef.current === listener) listenerRef.current = null;
     };
   }, [enabled, mode, props.httpBaseUrl, supported]);
@@ -139,12 +159,9 @@ export function ComposerVoiceWakePhraseButton(props: {
   useEffect(() => {
     const listener = listenerRef.current;
     if (!listener) return;
-    if (captureState === "idle" && !props.disabled && props.phase === "idle") {
-      listener.resume();
-    } else {
-      listener.pause();
-    }
-  }, [captureState, enabled, props.disabled, props.phase]);
+    if (props.disabled) listener.pause();
+    else listener.resume();
+  }, [enabled, props.disabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -156,6 +173,16 @@ export function ComposerVoiceWakePhraseButton(props: {
     window.addEventListener("keydown", onEscape, true);
     return () => window.removeEventListener("keydown", onEscape, true);
   }, [enabled]);
+
+  const unlockPlayback = () => {
+    void props.onPlaybackUnlock().catch((error: unknown) => {
+      toastManager.add({
+        type: "error",
+        title: "Audio playback unavailable",
+        description: error instanceof Error ? error.message : "The browser blocked audio playback.",
+      });
+    });
+  };
 
   const awake = listenerState === "awake";
   const label = !supported
@@ -173,7 +200,7 @@ export function ComposerVoiceWakePhraseButton(props: {
             : listenerState === "starting"
               ? `Starting “${VOICE_WAKE_PHRASE}”`
               : listenerState === "paused"
-                ? "Voice conversation paused while Mai responds"
+                ? "Submitting voice command"
                 : `Enable “${VOICE_WAKE_PHRASE}”`;
 
   return (
@@ -196,6 +223,7 @@ export function ComposerVoiceWakePhraseButton(props: {
             onClick={() => {
               if (enabled && listenerState === "needs-interaction") {
                 listenerRef.current?.unlock?.();
+                unlockPlayback();
                 return;
               }
               const nextEnabled = !enabled;
@@ -205,6 +233,7 @@ export function ComposerVoiceWakePhraseButton(props: {
               setListenerState(nextEnabled ? "starting" : "off");
               writePreference(nextEnabled);
               if (nextEnabled) {
+                unlockPlayback();
                 toastManager.add({
                   type: "warning",
                   title: `${VOICE_WAKE_PHRASE} enabled`,

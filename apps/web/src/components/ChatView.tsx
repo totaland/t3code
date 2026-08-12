@@ -248,7 +248,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
-import type { VoiceTurnPhase } from "./chat/ComposerVoiceInputButton";
+import type { VoiceTurnPhase } from "./chat/ComposerVoiceWakePhraseButton";
 import {
   normalizeAssistantTextForSpeech,
   resolveVoiceTurnResponse,
@@ -5329,14 +5329,23 @@ function ChatViewContent(props: ChatViewProps) {
     voicePendingPlaybackCountRef.current = 0;
   }, []);
 
-  const cancelVoiceTurn = useCallback(() => {
-    endVoiceTurnRouteHold(voiceRouteThreadKeyRef.current);
-    voiceEpochRef.current += 1;
-    pendingVoiceTurnRef.current = null;
-    voiceEmptySinceRef.current = null;
-    stopVoiceOutput();
-    setVoicePhase("idle");
-  }, [stopVoiceOutput]);
+  const cancelVoiceTurn = useCallback(
+    (
+      { preserveRouteHold = false }: { readonly preserveRouteHold?: boolean } = {
+        preserveRouteHold: false,
+      },
+    ) => {
+      if (!preserveRouteHold) {
+        endVoiceTurnRouteHold(voiceRouteThreadKeyRef.current);
+      }
+      voiceEpochRef.current += 1;
+      pendingVoiceTurnRef.current = null;
+      voiceEmptySinceRef.current = null;
+      stopVoiceOutput();
+      setVoicePhase("idle");
+    },
+    [stopVoiceOutput],
+  );
 
   const ensureVoicePlaybackContext = useCallback(async (): Promise<AudioContext> => {
     const existing = voicePlaybackContextRef.current;
@@ -5372,7 +5381,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
-    cancelVoiceTurn();
+    cancelVoiceTurn({ preserveRouteHold: true });
     const voiceEpoch = voiceEpochRef.current;
     const voiceRouteThreadKey = routeThreadKey;
     setVoicePhase("transcribing");
@@ -5648,9 +5657,12 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [stopVoiceOutput],
   );
-  const onInterrupt = async () => {
-    cancelVoiceTurn();
-
+  const onInterrupt = async (
+    { preserveVoiceRouteHold = false }: { readonly preserveVoiceRouteHold?: boolean } = {
+      preserveVoiceRouteHold: false,
+    },
+  ) => {
+    cancelVoiceTurn({ preserveRouteHold: preserveVoiceRouteHold });
     if (!activeThread) return;
     const result = await interruptThreadTurn({
       environmentId,
@@ -6699,6 +6711,8 @@ function ChatViewContent(props: ChatViewProps) {
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
                             onVoiceCapture={onVoiceCapture}
+                            onVoiceCaptureCancelled={cancelVoiceTurn}
+                            onVoiceInterrupt={() => onInterrupt({ preserveVoiceRouteHold: true })}
                             onVoicePlaybackUnlock={ensureVoicePlaybackContext}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}

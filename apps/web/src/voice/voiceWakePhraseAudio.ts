@@ -13,7 +13,7 @@ type LocalAudioWakePhraseListenerInput = {
   readonly onCommand: (transcript: string) => void | Promise<void>;
   readonly onTranscribe: (wav: Blob) => Promise<string>;
   readonly onSleep?: () => void;
-  readonly onSpeechStart?: () => void;
+  readonly onSpeechStart?: () => boolean | void;
   readonly onTranscript?: (transcript: string) => void;
   readonly onWake?: () => void;
   readonly onStateChange?: (state: VoiceWakePhraseState) => void;
@@ -311,7 +311,15 @@ export function createLocalAudioWakePhraseListener(
         target.frameCount += chunk.length;
         target.maxRms = Math.max(target.maxRms, chunkRms);
         if (chunkRms >= MIN_AUDIBLE_RMS) {
-          if (awake && !target.speechStarted) input.onSpeechStart?.();
+          const discardTriggerChunk =
+            awake && !target.speechStarted && input.onSpeechStart?.() === true;
+          if (discardTriggerChunk) {
+            resetAudio(target);
+            // Keep the capture window open so post-interruption silence can
+            // settle an echo-only trigger and release the preserved route hold.
+            target.speechStarted = true;
+            return;
+          }
           target.audibleGeneration += 1;
           target.speechStarted = true;
           target.silenceFrames = 0;

@@ -192,9 +192,11 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { ComposerVoiceInputButton, type VoiceTurnPhase } from "./ComposerVoiceInputButton";
+import {
+  ComposerVoiceWakePhraseButton,
+  type VoiceTurnPhase,
+} from "./ComposerVoiceWakePhraseButton";
 import { ComposerVoiceEnginePicker } from "./ComposerVoiceEnginePicker";
-import { ComposerVoiceWakePhraseButton } from "./ComposerVoiceWakePhraseButton";
 import {
   BotIcon,
   CircleAlertIcon,
@@ -573,6 +575,8 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
   onVoiceCapture: (input: Blob | string) => Promise<void>;
+  onVoiceCaptureCancelled: () => void;
+  onVoiceInterrupt: () => void | Promise<void>;
   onVoicePlaybackUnlock: () => Promise<unknown>;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -658,6 +662,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerElementContextsRef,
     onSend,
     onVoiceCapture,
+    onVoiceCaptureCancelled,
+    onVoiceInterrupt,
     onVoicePlaybackUnlock,
     onInterrupt,
     onImplementPlanInNewThread,
@@ -3205,24 +3211,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     prompt.trim().length > 0
                   }
                   httpBaseUrl={environmentHttpBaseUrl}
-                  onInterrupt={onInterrupt}
+                  onCaptureCancelled={onVoiceCaptureCancelled}
+                  onInterrupt={onVoiceInterrupt}
+                  onPlaybackUnlock={onVoicePlaybackUnlock}
                   phase={voicePhase}
                   onTranscript={onVoiceCapture}
-                />
-                <ComposerVoiceInputButton
-                  disabled={
-                    isConnecting ||
-                    isSendBusy ||
-                    isComposerApprovalState ||
-                    pendingUserInputs.length > 0 ||
-                    projectSelectionRequired ||
-                    environmentUnavailable !== null ||
-                    noProviderAvailable ||
-                    prompt.trim().length > 0
-                  }
-                  phase={voicePhase}
-                  onCapture={onVoiceCapture}
-                  onPlaybackUnlock={onVoicePlaybackUnlock}
                 />
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
