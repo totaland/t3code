@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { decodePcm16Le, readPcm16Chunks } from "./voicePcmStream";
 
 describe("PCM16 streaming", () => {

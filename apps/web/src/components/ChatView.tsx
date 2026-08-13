@@ -248,7 +248,8 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
-import type { VoiceTurnPhase } from "./chat/ComposerVoiceWakePhraseButton";
+import type { VoiceTurnPhase } from "../voice/useVoiceSessionController";
+import { VoiceChatPage } from "./voice/VoiceChatPage";
 import {
   normalizeAssistantTextForSpeech,
   resolveVoiceTurnResponse,
@@ -258,6 +259,7 @@ import {
 import { beginVoiceTurnRouteHold, endVoiceTurnRouteHold } from "../voice/voiceTurnRouteHold";
 import { primeVoicePlaybackContext } from "../voice/voicePlayback";
 import { VoicePcmStreamPlayer } from "../voice/voicePcmStream";
+import { buildTextThreadRoute, buildVoiceThreadRoute } from "../voice/voiceThreadRoutes";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -526,6 +528,7 @@ type ChatViewProps =
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
+      voiceMode?: boolean;
       threadSyncPhase?: ThreadSyncPhase | null;
       routeKind: "server";
       draftId?: never;
@@ -1208,6 +1211,7 @@ function ChatViewContent(props: ChatViewProps) {
     forceExpandedMobileComposer = false,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
+  const voiceMode = routeKind === "server" ? (props.voiceMode ?? false) : false;
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
@@ -6500,6 +6504,26 @@ function ChatViewContent(props: ChatViewProps) {
     ) : null
   ) : null;
 
+  if (voiceMode) {
+    return (
+      <VoiceChatPage
+        httpBaseUrl={environmentHttpBaseUrl}
+        messages={activeThread.messages}
+        phase={voicePhase}
+        projectTitle={activeProject?.title ?? null}
+        threadTitle={activeThread.title}
+        onCaptureCancelled={cancelVoiceTurn}
+        onInterrupt={() => onInterrupt({ preserveVoiceRouteHold: true })}
+        onPlaybackUnlock={ensureVoicePlaybackContext}
+        onTranscript={onVoiceCapture}
+        onReturnToText={() => {
+          cancelVoiceTurn();
+          void navigate(buildTextThreadRoute(environmentId, threadId));
+        }}
+      />
+    );
+  }
+
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
@@ -6714,7 +6738,6 @@ function ChatViewContent(props: ChatViewProps) {
                             isSendBusy={isSendBusy}
                             sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
                             isPreparingWorktree={isPreparingWorktree}
-                            voicePhase={voicePhase}
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
@@ -6746,9 +6769,9 @@ function ChatViewContent(props: ChatViewProps) {
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
-                            onVoiceCapture={onVoiceCapture}
-                            onVoiceCaptureCancelled={cancelVoiceTurn}
-                            onVoiceInterrupt={() => onInterrupt({ preserveVoiceRouteHold: true })}
+                            onOpenVoice={() => {
+                              void navigate(buildVoiceThreadRoute(environmentId, threadId));
+                            }}
                             onVoicePlaybackUnlock={ensureVoicePlaybackContext}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}

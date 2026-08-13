@@ -65,7 +65,6 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
-import { useEnvironmentHttpBaseUrl } from "../../state/environments";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { resolveShortcutCommand } from "../../keybindings";
 import {
@@ -192,10 +191,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import {
-  ComposerVoiceWakePhraseButton,
-  type VoiceTurnPhase,
-} from "./ComposerVoiceWakePhraseButton";
+import { ComposerVoiceWakePhraseButton } from "./ComposerVoiceWakePhraseButton";
 import { ComposerVoiceEnginePicker } from "./ComposerVoiceEnginePicker";
 import {
   BotIcon,
@@ -518,7 +514,6 @@ export interface ChatComposerProps {
   isSendBusy: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
-  voicePhase: VoiceTurnPhase;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -574,9 +569,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
-  onVoiceCapture: (input: Blob | string) => Promise<void>;
-  onVoiceCaptureCancelled: () => void;
-  onVoiceInterrupt: () => void | Promise<void>;
+  onOpenVoice: () => void;
   onVoicePlaybackUnlock: () => Promise<unknown>;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -630,7 +623,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendBusy,
     sendDisabledReason,
     isPreparingWorktree,
-    voicePhase,
     environmentUnavailable,
     activePendingApproval,
     pendingApprovals,
@@ -661,9 +653,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContextsRef,
     composerElementContextsRef,
     onSend,
-    onVoiceCapture,
-    onVoiceCaptureCancelled,
-    onVoiceInterrupt,
+    onOpenVoice,
     onVoicePlaybackUnlock,
     onInterrupt,
     onImplementPlanInNewThread,
@@ -683,7 +673,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
   } = props;
   const isSendDisabled = sendDisabledReason !== null;
-  const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
 
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -3202,6 +3191,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerVoiceEnginePicker />
                 <ComposerVoiceWakePhraseButton
                   disabled={
+                    routeKind !== "server" ||
                     isConnecting ||
                     isComposerApprovalState ||
                     pendingUserInputs.length > 0 ||
@@ -3210,12 +3200,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     noProviderAvailable ||
                     prompt.trim().length > 0
                   }
-                  httpBaseUrl={environmentHttpBaseUrl}
-                  onCaptureCancelled={onVoiceCaptureCancelled}
-                  onInterrupt={onVoiceInterrupt}
+                  onEnterVoice={onOpenVoice}
                   onPlaybackUnlock={onVoicePlaybackUnlock}
-                  phase={voicePhase}
-                  onTranscript={onVoiceCapture}
                 />
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
