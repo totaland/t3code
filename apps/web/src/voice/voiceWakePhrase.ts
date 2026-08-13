@@ -48,6 +48,7 @@ export type VoiceWakePhraseListener = {
 
 type ListenerInput = {
   readonly onCommand: (transcript: string) => void | Promise<void>;
+  readonly onNoCommand?: () => void;
   readonly onSleep?: () => void;
   readonly onSpeechStart?: () => void;
   readonly onTranscript?: (transcript: string) => void;
@@ -78,6 +79,10 @@ function getRecognitionConstructor(): SpeechRecognitionConstructor | null {
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   };
   return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
+}
+
+export function isBrowserSpeechRecognitionSupported(): boolean {
+  return getRecognitionConstructor() !== null;
 }
 
 export type VoiceWakePhraseMode = "speech-recognition" | "local-audio" | "unsupported";
@@ -219,7 +224,11 @@ export function createVoiceWakePhraseListener(
           ? stripVoiceWakePhrase(transcript)
           : transcript.trim();
         input.onTranscript?.(command);
-        if (!result.isFinal || command.length === 0) continue;
+        if (!result.isFinal) continue;
+        if (command.length === 0) {
+          input.onNoCommand?.();
+          continue;
+        }
         if (isVoiceSleepCommand(command)) {
           goToSleep();
           continue;

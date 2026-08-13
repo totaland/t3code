@@ -23,7 +23,6 @@ export async function transcribeVoiceWav(input: {
     {
       method: "POST",
       body: input.wav,
-      credentials: "include",
       headers: {
         "content-type": "audio/wav",
         "x-tts-backend": settings.backend,
@@ -40,7 +39,6 @@ export async function transcribeVoiceWav(input: {
     typeof payload.text === "string"
       ? payload.text.trim()
       : "";
-  if (!text) throw new Error("No speech was detected.");
   return text;
 }
 
@@ -63,7 +61,6 @@ export async function synthesizeVoiceReplyStream(input: {
     {
       method: "POST",
       body: JSON.stringify({ text: input.text, backend: settings.backend }),
-      credentials: "include",
       headers: { "content-type": "application/json" },
       ...(input.signal ? { signal: input.signal } : {}),
     },
@@ -138,6 +135,7 @@ export function completedAssistantTextForVoiceTurn(
 
   let completedText: string | null = null;
   for (const message of messages.slice(userMessageIndex + 1)) {
+    if (message.role === "user") break;
     if (message.role === "assistant" && !message.streaming && message.text.trim().length > 0) {
       completedText = message.text;
     }
@@ -161,6 +159,7 @@ export function nextAssistantSpeechChunkForVoiceTurn(
   if (userMessageIndex < 0) return null;
 
   for (const message of messages.slice(userMessageIndex + 1)) {
+    if (message.role === "user") break;
     if (message.role !== "assistant" || message.text.trim().length === 0) continue;
 
     const spokenOffset =

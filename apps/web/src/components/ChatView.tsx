@@ -257,7 +257,9 @@ import {
   transcribeVoiceWav,
 } from "../voice/voiceClient";
 import { beginVoiceTurnRouteHold, endVoiceTurnRouteHold } from "../voice/voiceTurnRouteHold";
-import { primeVoicePlaybackContext } from "../voice/voicePlayback";
+import { createVoiceEnvironmentFetch } from "../voice/voiceEnvironmentFetch";
+import { refreshVoiceSendContext, resolveVoiceSendContext } from "../voice/voiceSendContext";
+import { voiceRouteSession } from "../voice/voiceRouteSession";
 import { VoicePcmStreamPlayer } from "../voice/voicePcmStream";
 import { buildTextThreadRoute, buildVoiceThreadRoute } from "../voice/voiceThreadRoutes";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
@@ -1257,6 +1259,7 @@ function ChatViewContent(props: ChatViewProps) {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const voiceFetch = useMemo(() => createVoiceEnvironmentFetch(environmentId), [environmentId]);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const environmentById = useMemo(
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
@@ -1367,9 +1370,13 @@ function ChatViewContent(props: ChatViewProps) {
   } | null>(null);
   const voiceRouteThreadKeyRef = useRef(routeThreadKey);
   const voiceRequestAbortRef = useRef<AbortController | null>(null);
-  const voicePlaybackContextRef = useRef<AudioContext | null>(null);
   const voicePcmStreamPlayerRef = useRef<VoicePcmStreamPlayer | null>(null);
   const voicePendingPlaybackCountRef = useRef(0);
+  useEffect(() => voiceRouteSession.retainPlayback(), []);
+  useEffect(() => {
+    if (!voiceMode) return;
+    return voiceRouteSession.retainSendContext(routeThreadKey);
+  }, [routeThreadKey, voiceMode]);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -4041,7 +4048,7 @@ function ChatViewContent(props: ChatViewProps) {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen, voiceMode]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -4898,6 +4905,12 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const voiceSendContext =
+    refreshVoiceSendContext(voiceRouteSession.readSendContext(routeThreadKey), providerStatuses) ??
+    resolveVoiceSendContext({
+      modelSelection: activeThread?.modelSelection ?? activeProject?.defaultModelSelection,
+      providers: providerStatuses,
+    });
   const onSend = async (
     input?: {
       readonly preventDefault?: () => void;
@@ -4950,7 +4963,7 @@ function ChatViewContent(props: ChatViewProps) {
       onAdvanceActivePendingUserInput();
       return;
     }
-    const sendCtx = composerRef.current?.getSendContext();
+    const sendCtx = composerRef.current?.getSendContext() ?? voiceSendContext;
     if (!sendCtx?.providerAvailable) {
       notifyDirectAnnotationAttached();
       return;
@@ -5383,17 +5396,7 @@ function ChatViewContent(props: ChatViewProps) {
     [stopVoiceOutput],
   );
 
-  const ensureVoicePlaybackContext = useCallback(async (): Promise<AudioContext> => {
-    const existing = voicePlaybackContextRef.current;
-    if (existing && existing.state !== "closed") {
-      await primeVoicePlaybackContext(existing);
-      return existing;
-    }
-    const next = new AudioContext();
-    voicePlaybackContextRef.current = next;
-    await primeVoicePlaybackContext(next);
-    return next;
-  }, []);
+  const ensureVoicePlaybackContext = useCallback(() => voiceRouteSession.ensurePlayback(), []);
 
   const runVoiceTurn = async (
     resolveTranscript: (signal: AbortSignal) => Promise<string>,
@@ -5495,6 +5498,7 @@ function ChatViewContent(props: ChatViewProps) {
             httpBaseUrl: environmentHttpBaseUrl!,
             wav: input,
             signal,
+            fetchImplementation: voiceFetch,
           }),
         );
 
@@ -5589,6 +5593,7 @@ function ChatViewContent(props: ChatViewProps) {
         httpBaseUrl: environmentHttpBaseUrl,
         text: speechText,
         signal: controller.signal,
+        fetchImplementation: voiceFetch,
       });
       if (
         controller.signal.aborted ||
@@ -5598,7 +5603,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
-      const context = voicePlaybackContextRef.current;
+      const context = voiceRouteSession.getPlayback();
       if (!context || context.state === "closed") {
         throw new Error("Voice playback was not unlocked. Tap the microphone and try again.");
       }
@@ -5669,6 +5674,7 @@ function ChatViewContent(props: ChatViewProps) {
     environmentHttpBaseUrl,
     latestTurnSettled,
     routeThreadKey,
+    voiceFetch,
     voicePhase,
     voiceResolutionTick,
   ]);
@@ -5685,11 +5691,6 @@ function ChatViewContent(props: ChatViewProps) {
       voiceEpochRef.current += 1;
       pendingVoiceTurnRef.current = null;
       stopVoiceOutput();
-      const context = voicePlaybackContextRef.current;
-      voicePlaybackContextRef.current = null;
-      if (context && context.state !== "closed") {
-        void context.close();
-      }
     },
     [stopVoiceOutput],
   );
@@ -6508,6 +6509,14 @@ function ChatViewContent(props: ChatViewProps) {
     return (
       <VoiceChatPage
         httpBaseUrl={environmentHttpBaseUrl}
+        fetchImplementation={voiceFetch}
+        disabled={
+          isConnecting ||
+          activeEnvironmentUnavailable ||
+          activePendingApproval !== null ||
+          pendingUserInputs.length > 0 ||
+          voiceSendContext === null
+        }
         messages={activeThread.messages}
         phase={voicePhase}
         projectTitle={activeProject?.title ?? null}
@@ -6770,6 +6779,10 @@ function ChatViewContent(props: ChatViewProps) {
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
                             onOpenVoice={() => {
+                              const sendContext = composerRef.current?.getSendContext();
+                              if (sendContext) {
+                                voiceRouteSession.rememberSendContext(routeThreadKey, sendContext);
+                              }
                               void navigate(buildVoiceThreadRoute(environmentId, threadId));
                             }}
                             onVoicePlaybackUnlock={ensureVoicePlaybackContext}

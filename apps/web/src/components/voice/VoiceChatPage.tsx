@@ -8,8 +8,9 @@ import {
   PhoneOffIcon,
   Volume2Icon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../../types";
+import type { VoiceFetch } from "../../voice/voiceClient";
 import { Button } from "../ui/button";
 import {
   isVoiceCapabilityUnavailable,
@@ -19,6 +20,8 @@ import {
 
 export function VoiceChatPage(props: {
   readonly httpBaseUrl: string | null;
+  readonly fetchImplementation: VoiceFetch;
+  readonly disabled?: boolean;
   readonly messages: readonly ChatMessage[];
   readonly phase: VoiceTurnPhase;
   readonly projectTitle: string | null;
@@ -30,7 +33,13 @@ export function VoiceChatPage(props: {
   readonly onTranscript: (transcript: string) => Promise<void>;
 }) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const mainRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    mainRef.current?.focus();
+  }, []);
   const session = useVoiceSessionController({
+    disabled: props.disabled,
+    fetchImplementation: props.fetchImplementation,
     httpBaseUrl: props.httpBaseUrl,
     onCaptureCancelled: props.onCaptureCancelled,
     onInterrupt: props.onInterrupt,
@@ -41,7 +50,9 @@ export function VoiceChatPage(props: {
   const recentMessages = props.messages
     .filter((message) => message.role === "user" || message.role === "assistant")
     .slice(-10);
-  const unavailable = isVoiceCapabilityUnavailable(session.captureMode, session.listenerState);
+  const unavailable =
+    isVoiceCapabilityUnavailable(session.captureMode, session.listenerState) &&
+    !session.canEnableBrowserFallback;
   const phaseIcon =
     props.phase === "speaking" ? (
       <Volume2Icon className="size-14" aria-hidden />
@@ -55,7 +66,12 @@ export function VoiceChatPage(props: {
   };
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
+    <main
+      ref={mainRef}
+      tabIndex={-1}
+      aria-label="Voice conversation"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
+    >
       <header className="flex min-h-14 items-center gap-3 border-b border-border/60 px-[calc(env(safe-area-inset-left)+1rem)] pr-[calc(env(safe-area-inset-right)+1rem)]">
         <Button
           type="button"
@@ -115,7 +131,8 @@ export function VoiceChatPage(props: {
             >
               <p className="font-medium">Voice capability unavailable</p>
               <p className="mt-1 text-muted-foreground text-sm">
-                Check browser microphone permission, or continue in this same text conversation.
+                {session.unavailableReason ??
+                  "Check browser microphone permission, or continue in this same text conversation."}
               </p>
               <Button className="mt-3" variant="outline" onClick={props.onReturnToText}>
                 Continue in text
@@ -123,7 +140,7 @@ export function VoiceChatPage(props: {
             </div>
           ) : null}
 
-          {session.captureMode === "browser-fallback" && !session.enabled ? (
+          {session.canEnableBrowserFallback && !session.enabled ? (
             <div className="max-w-md rounded-xl border border-border bg-muted/30 p-4 text-left">
               <p className="font-medium">Local transcription unavailable</p>
               <p className="mt-1 text-muted-foreground text-sm">
@@ -179,6 +196,7 @@ export function VoiceChatPage(props: {
           type="button"
           variant="outline"
           className="min-h-11 rounded-full"
+          disabled={!session.enabled && !session.canTurnMicOn}
           aria-pressed={!session.enabled}
           aria-label={
             session.enabled ? "Turn microphone capture off" : "Turn microphone capture on"

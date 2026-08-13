@@ -175,6 +175,23 @@ describe("voice wake phrase", () => {
     expect(onCommand).toHaveBeenCalledTimes(2);
   });
 
+  it("reports final speech that contains no command", () => {
+    FakeSpeechRecognition.instances = [];
+    const onNoCommand = vi.fn();
+    const listener = createVoiceWakePhraseListener({
+      recognitionConstructor: FakeSpeechRecognition as SpeechRecognitionConstructor,
+      onCommand: vi.fn(),
+      onNoCommand,
+    });
+
+    listener?.start();
+    const recognition = FakeSpeechRecognition.instances[0]!;
+    recognition.emitTranscript("Hey Mai", true);
+    recognition.emitSpeechStart();
+    recognition.emitTranscript("   ", true);
+
+    expect(onNoCommand).toHaveBeenCalledTimes(2);
+  });
   it("ignores duplicate final results while a voice command is pending", () => {
     FakeSpeechRecognition.instances = [];
     const onCommand = vi.fn(() => new Promise<void>(() => {}));

@@ -11,12 +11,13 @@ type AudioContextConstructor = new () => AudioContext;
 
 type LocalAudioWakePhraseListenerInput = {
   readonly onCommand: (transcript: string) => void | Promise<void>;
-  readonly onTranscribe: (wav: Blob) => Promise<string>;
+  readonly onTranscribe: (wav: Blob, signal: AbortSignal) => Promise<string>;
   readonly onSleep?: () => void;
   readonly onSpeechStart?: () => boolean | void;
   readonly onTranscript?: (transcript: string) => void;
   readonly onWake?: () => void;
   readonly onStateChange?: (state: VoiceWakePhraseState) => void;
+  readonly onError?: (error: unknown) => void;
   readonly audioContextConstructor?: AudioContextConstructor | null;
   readonly getUserMedia?: ((constraints: MediaStreamConstraints) => Promise<MediaStream>) | null;
   readonly schedule?: (callback: () => void, delayMs: number) => unknown;
@@ -39,6 +40,7 @@ type LocalAudioSession = {
   silenceFrames: number;
   speechStarted: boolean;
   transcribing: boolean;
+  transcriptionAbortController: AbortController | null;
 };
 
 const PROBE_INTERVAL_MS = 2_500;
@@ -90,6 +92,8 @@ export function createLocalAudioWakePhraseListener(
   };
 
   const resetAudio = (target: LocalAudioSession) => {
+    target.transcriptionAbortController?.abort();
+    target.transcriptionAbortController = null;
     target.chunks.length = 0;
     target.frameCount = 0;
     target.maxRms = 0;
@@ -116,6 +120,8 @@ export function createLocalAudioWakePhraseListener(
   const disposeSession = (target: LocalAudioSession) => {
     if (target.probeTimer !== null) cancelScheduled(target.probeTimer);
     target.probeTimer = null;
+    target.transcriptionAbortController?.abort();
+    target.transcriptionAbortController = null;
     target.transcribing = false;
     target.processor.onaudioprocess = null;
     target.source.disconnect();
@@ -131,6 +137,17 @@ export function createLocalAudioWakePhraseListener(
     }
     void target.context.close();
     if (session === target) session = null;
+  };
+
+  const blockCapture = (target: LocalAudioSession, error: unknown) => {
+    if (session !== target || !enabled || paused) return;
+    enabled = false;
+    awake = false;
+    startGeneration += 1;
+    disposeSession(target);
+    input.onTranscript?.("");
+    input.onError?.(error);
+    emitState("blocked");
   };
 
   const scheduleProbe = (target: LocalAudioSession) => {
@@ -192,16 +209,22 @@ export function createLocalAudioWakePhraseListener(
     if (session !== target || !enabled || paused || !awake || target.transcribing) return;
     if (!target.speechStarted || target.chunks.length === 0) return;
     target.transcribing = true;
+    const controller = new AbortController();
+    target.transcriptionAbortController = controller;
 
     try {
       const wav = encodePcm16Wav(target.chunks, target.sampleRate);
-      const transcript = await input.onTranscribe(new Blob([wav], { type: "audio/wav" }));
-      if (session !== target || !enabled || paused || !awake) return;
+      const transcript = await input.onTranscribe(
+        new Blob([wav], { type: "audio/wav" }),
+        controller.signal,
+      );
+      if (session !== target || !enabled || paused || !awake || controller.signal.aborted) return;
+      target.transcriptionAbortController = null;
       acceptTranscript(target, transcript);
-    } catch {
-      if (session !== target || !enabled || paused || !awake) return;
-      resetAudio(target);
-      emitState("awake");
+    } catch (error) {
+      if (session !== target || !enabled || paused || !awake || controller.signal.aborted) return;
+      target.transcriptionAbortController = null;
+      blockCapture(target, error);
     }
   };
 
@@ -215,15 +238,24 @@ export function createLocalAudioWakePhraseListener(
     }
 
     target.transcribing = true;
+    const controller = new AbortController();
+    target.transcriptionAbortController = controller;
     const probedAudibleGeneration = target.audibleGeneration;
     const wav = encodePcm16Wav(target.chunks, target.sampleRate);
     let transcript = "";
     try {
-      transcript = await input.onTranscribe(new Blob([wav], { type: "audio/wav" }));
-    } catch {
-      // A transient transcription failure should not disarm the wake listener.
+      transcript = await input.onTranscribe(
+        new Blob([wav], { type: "audio/wav" }),
+        controller.signal,
+      );
+    } catch (error) {
+      if (session !== target || !enabled || paused || controller.signal.aborted) return;
+      target.transcriptionAbortController = null;
+      blockCapture(target, error);
+      return;
     }
-    if (session !== target || !enabled || paused) return;
+    if (session !== target || !enabled || paused || controller.signal.aborted) return;
+    target.transcriptionAbortController = null;
     target.transcribing = false;
     if (!containsVoiceWakePhrase(transcript)) {
       scheduleProbe(target);
@@ -296,6 +328,7 @@ export function createLocalAudioWakePhraseListener(
         silenceFrames: 0,
         speechStarted: false,
         transcribing: false,
+        transcriptionAbortController: null,
         audibleGeneration: 0,
         resumeOnInteraction: () => void resumeAudio(target),
       };

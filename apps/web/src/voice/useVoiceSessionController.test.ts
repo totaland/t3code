@@ -1,14 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import type { VoiceFetch } from "./voiceClient";
 type ListenerInput = {
   readonly onCommand: (transcript: string) => void | Promise<void>;
+  readonly onError?: (error: unknown) => void;
+  readonly onNoCommand?: () => void;
   readonly onSpeechStart?: () => boolean | void;
   readonly onStateChange?: (state: string) => void;
+  readonly onTranscribe?: (wav: Blob, signal: AbortSignal) => Promise<string>;
+  readonly onTranscript?: (transcript: string) => void;
 };
 
 const harness = vi.hoisted(() => ({
   effects: [] as Array<() => void | (() => void)>,
+  browserSupported: false,
   listenerInput: null as ListenerInput | null,
+  stateSetters: [] as Array<ReturnType<typeof vi.fn>>,
   listener: {
     pause: vi.fn(),
     resume: vi.fn(),
@@ -28,13 +35,21 @@ vi.mock("react", async (importOriginal) => {
       harness.effects.push(effect);
     }),
     useRef: <T>(value: T) => ({ current: value }),
-    useState: <T>(value: T) => [value, vi.fn()],
+    useState: <T>(value: T) => {
+      const setter = vi.fn();
+      harness.stateSetters.push(setter);
+      return [value, setter];
+    },
   };
 });
 
 vi.mock("./voiceWakePhrase", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./voiceWakePhrase")>();
-  return { ...actual, getVoiceWakePhraseMode: () => "local-audio" };
+  return {
+    ...actual,
+    getVoiceWakePhraseMode: () => "local-audio",
+    isBrowserSpeechRecognitionSupported: () => harness.browserSupported,
+  };
 });
 
 vi.mock("./voiceWakePhraseAudio", () => ({
@@ -53,13 +68,21 @@ import {
 } from "./useVoiceSessionController";
 
 function createController(overrides?: {
+  readonly disabled?: boolean;
+  readonly fetchImplementation?: VoiceFetch;
+  readonly httpBaseUrl?: string | null;
   readonly phase?: "idle" | "transcribing" | "waiting" | "speaking";
   readonly onCaptureCancelled?: () => void;
   readonly onInterrupt?: () => void | Promise<void>;
   readonly onTranscript?: (transcript: string) => Promise<void>;
 }) {
   return useVoiceSessionController({
-    httpBaseUrl: "http://localhost",
+    disabled: overrides?.disabled,
+    httpBaseUrl:
+      overrides && "httpBaseUrl" in overrides
+        ? (overrides.httpBaseUrl ?? null)
+        : "http://localhost",
+    fetchImplementation: overrides?.fetchImplementation ?? vi.fn(async () => new Response()),
     onCaptureCancelled: overrides?.onCaptureCancelled ?? vi.fn(),
     onInterrupt: overrides?.onInterrupt ?? vi.fn(),
     onPlaybackUnlock: vi.fn(async () => undefined),
@@ -72,7 +95,9 @@ describe("useVoiceSessionController", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     harness.effects.length = 0;
+    harness.browserSupported = false;
     harness.listenerInput = null;
+    harness.stateSetters.length = 0;
   });
 
   it("keeps microphone capture running during sleep but stops it for mic off", () => {
@@ -123,6 +148,91 @@ describe("useVoiceSessionController", () => {
     controller.micOff();
   });
 
+  it("releases an interrupted route hold when transcription is empty", async () => {
+    let finishInterrupt!: () => void;
+    const interruptFinished = new Promise<void>((resolve) => {
+      finishInterrupt = resolve;
+    });
+    const onCaptureCancelled = vi.fn();
+    createController({
+      fetchImplementation: vi.fn(async () => Response.json({ text: "" })),
+      phase: "speaking",
+      onCaptureCancelled,
+      onInterrupt: () => interruptFinished,
+    });
+    harness.effects[0]?.();
+
+    expect(harness.listenerInput?.onSpeechStart?.()).toBe(true);
+    const transcription = harness.listenerInput?.onTranscribe?.(
+      new Blob(),
+      new AbortController().signal,
+    );
+    finishInterrupt();
+
+    await expect(transcription).resolves.toBe("");
+    expect(onCaptureCancelled).toHaveBeenCalledOnce();
+  });
+
+  it("releases a browser fallback barge-in with no final command", async () => {
+    let finishInterrupt!: () => void;
+    const interruptFinished = new Promise<void>((resolve) => {
+      finishInterrupt = resolve;
+    });
+    const onCaptureCancelled = vi.fn();
+    createController({
+      phase: "speaking",
+      onCaptureCancelled,
+      onInterrupt: () => interruptFinished,
+    });
+    harness.effects[0]?.();
+
+    expect(harness.listenerInput?.onSpeechStart?.()).toBe(true);
+    harness.listenerInput?.onNoCommand?.();
+    finishInterrupt();
+
+    await vi.waitFor(() => expect(onCaptureCancelled).toHaveBeenCalledOnce());
+  });
+  it("does not submit a pending command after microphone shutdown", async () => {
+    let finishInterrupt!: () => void;
+    const interruptFinished = new Promise<void>((resolve) => {
+      finishInterrupt = resolve;
+    });
+    const onTranscript = vi.fn(async () => undefined);
+    const controller = createController({
+      phase: "speaking",
+      onInterrupt: () => interruptFinished,
+      onTranscript,
+    });
+    harness.effects[0]?.();
+
+    expect(harness.listenerInput?.onSpeechStart?.()).toBe(true);
+    const command = Promise.resolve(harness.listenerInput?.onCommand("do not send"));
+    controller.micOff();
+    finishInterrupt();
+    await command;
+
+    expect(onTranscript).not.toHaveBeenCalled();
+  });
+
+  it("keeps the recognized command visible until submission finishes", async () => {
+    let finishSubmission!: () => void;
+    const submissionFinished = new Promise<void>((resolve) => {
+      finishSubmission = resolve;
+    });
+    const controller = createController({
+      onTranscript: () => submissionFinished,
+    });
+    harness.effects[0]?.();
+
+    const command = Promise.resolve(harness.listenerInput?.onCommand("show this caption"));
+    await Promise.resolve();
+
+    expect(harness.stateSetters[2]).toHaveBeenCalledWith("show this caption");
+    finishSubmission();
+    await command;
+    expect(harness.stateSetters[2]).toHaveBeenLastCalledWith("");
+  });
+
   it("releases microphone resources on lifecycle cleanup", () => {
     createController();
     const cleanup = harness.effects[0]?.();
@@ -132,6 +242,21 @@ describe("useVoiceSessionController", () => {
     expect(harness.listener.stop).toHaveBeenCalledOnce();
   });
 
+  it("blocks phantom mic activation and exposes an explicit browser fallback", () => {
+    harness.browserSupported = true;
+    const controller = createController({ httpBaseUrl: null });
+
+    expect(controller.listenerState).toBe("blocked");
+    expect(controller.canTurnMicOn).toBe(false);
+    expect(controller.canEnableBrowserFallback).toBe(true);
+
+    controller.micOn();
+    expect(harness.stateSetters[0]).not.toHaveBeenCalledWith(true);
+
+    controller.enableBrowserFallback();
+    expect(harness.stateSetters[1]).toHaveBeenCalledWith(true);
+    expect(harness.stateSetters[0]).toHaveBeenCalledWith(true);
+  });
   it("never silently starts browser speech recognition fallback", () => {
     const mode = resolveVoiceCaptureMode("speech-recognition");
 

@@ -1357,6 +1357,7 @@ const assertBrowserApiCorsPreflightHeaders = (
     "content-type",
     "dpop",
     "traceparent",
+    "x-tts-backend",
   ]);
 };
 const crossOriginClientOrigin = "http://remote-client.test:3773";
@@ -4288,6 +4289,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "content-type",
         "dpop",
         "traceparent",
+        "x-tts-backend",
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

@@ -9,7 +9,7 @@ import {
 } from "./voiceClient";
 
 describe("local voice client", () => {
-  it("posts WAV to the selected environment with credentials", async () => {
+  it("posts WAV to the selected environment through its fetch boundary", async () => {
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
     const fetchImplementation: VoiceFetch = async (input, init) => {
       requests.push({ url: String(input), init });
@@ -25,7 +25,7 @@ describe("local voice client", () => {
       }),
     ).resolves.toBe("hello agent");
     expect(requests[0]?.url).toBe("http://127.0.0.1:3773/api/voice/transcribe");
-    expect(requests[0]?.init?.credentials).toBe("include");
+    expect(requests[0]?.init?.credentials).toBeUndefined();
     expect(requests[0]?.init?.body).toBe(wav);
     expect(new Headers(requests[0]?.init?.headers).get("x-tts-backend")).toBe("auto");
   });
@@ -96,6 +96,38 @@ describe("voice turn correlation", () => {
     });
   });
 
+  it("stops response correlation at the next user turn", () => {
+    const messages = [
+      { id: "voice-user", role: "user", text: "hello", turnId: null, streaming: false },
+      {
+        id: "voice-assistant",
+        role: "assistant",
+        text: "Speak only this reply",
+        turnId: "turn-voice",
+        streaming: false,
+      },
+      { id: "next-user", role: "user", text: "follow-up", turnId: null, streaming: false },
+      {
+        id: "next-assistant",
+        role: "assistant",
+        text: "Do not speak this yet",
+        turnId: "turn-next",
+        streaming: false,
+      },
+    ];
+
+    expect(completedAssistantTextForVoiceTurn(messages, "voice-user")).toBe(
+      "Speak only this reply",
+    );
+    expect(resolveVoiceTurnResponse(messages, "voice-user", false)).toEqual({
+      status: "ready",
+      messageId: "voice-assistant",
+      text: "Speak only this reply",
+    });
+    expect(
+      resolveVoiceTurnResponse(messages, "voice-user", false, new Set(["voice-assistant"])),
+    ).toEqual({ status: "pending" });
+  });
   it("queues every completed assistant message once in source order", () => {
     const messages = [
       { id: "voice-user", role: "user", text: "hello", turnId: null, streaming: false },
