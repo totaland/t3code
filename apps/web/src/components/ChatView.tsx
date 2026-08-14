@@ -261,7 +261,7 @@ import { createVoiceEnvironmentFetch } from "../voice/voiceEnvironmentFetch";
 import { refreshVoiceSendContext, resolveVoiceSendContext } from "../voice/voiceSendContext";
 import { voiceRouteSession } from "../voice/voiceRouteSession";
 import { VoicePcmStreamPlayer } from "../voice/voicePcmStream";
-import { enterVoiceThread, returnToTextThread } from "../voice/voiceThreadRoutes";
+import { useVoiceThreadTransitions } from "../voice/useVoiceThreadTransitions";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -6517,6 +6517,20 @@ function ChatViewContent(props: ChatViewProps) {
     ) : null
   ) : null;
 
+  const voiceThreadTransitions = useVoiceThreadTransitions({
+    environmentId,
+    threadId,
+    beforeEnterVoice: () => {
+      const sendContext = composerRef.current?.getSendContext();
+      if (sendContext) {
+        voiceRouteSession.rememberSendContext(routeThreadKey, sendContext);
+      }
+    },
+    beforeReturnToText: () => {
+      cancelVoiceTurn();
+      voiceRouteSession.closePlayback();
+    },
+  });
   if (voiceMode) {
     return (
       <VoiceChatPage
@@ -6537,11 +6551,7 @@ function ChatViewContent(props: ChatViewProps) {
         onInterrupt={() => onInterrupt({ preserveVoiceRouteHold: true })}
         onPlaybackUnlock={ensureVoicePlaybackContext}
         onTranscript={onVoiceCapture}
-        onReturnToText={() => {
-          cancelVoiceTurn();
-          voiceRouteSession.closePlayback();
-          void returnToTextThread(navigate, environmentId, threadId);
-        }}
+        onReturnToText={voiceThreadTransitions.returnToText}
       />
     );
   }
@@ -6791,13 +6801,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
-                            onOpenVoice={() => {
-                              const sendContext = composerRef.current?.getSendContext();
-                              if (sendContext) {
-                                voiceRouteSession.rememberSendContext(routeThreadKey, sendContext);
-                              }
-                              void enterVoiceThread(navigate, environmentId, threadId);
-                            }}
+                            onOpenVoice={voiceThreadTransitions.enterVoice}
                             onVoicePlaybackUnlock={ensureVoicePlaybackContext}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
