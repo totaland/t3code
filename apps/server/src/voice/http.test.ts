@@ -3,6 +3,7 @@ import { browserApiCorsHeaders } from "../httpCors.ts";
 import {
   fetchModelGateway,
   isSupportedVoiceBackend,
+  mapVoiceGatewayFailureStatus,
   requestTranscription,
   readTranscriptionText,
   resolveModelGatewayConfig,
@@ -98,6 +99,13 @@ describe("backend-voice backend IDs", () => {
 });
 
 describe("backend-voice transport contracts", () => {
+  it("preserves unavailable status while keeping transient failures retryable", () => {
+    expect(mapVoiceGatewayFailureStatus(503)).toBe(503);
+    expect(mapVoiceGatewayFailureStatus(409)).toBe(409);
+    expect(mapVoiceGatewayFailureStatus(500)).toBe(502);
+    expect(mapVoiceGatewayFailureStatus(504)).toBe(502);
+  });
+
   it("propagates request cancellation to the model gateway", async () => {
     const gateway = resolveModelGatewayConfig({
       modelGatewayUrl: "http://localhost:8091",

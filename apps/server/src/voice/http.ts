@@ -129,6 +129,11 @@ export function readTranscriptionText(payload: unknown): string | null {
   return text.length <= MAX_TRANSCRIPT_TEXT_LENGTH ? text : null;
 }
 
+export function mapVoiceGatewayFailureStatus(status: number): 409 | 502 | 503 {
+  if (status === 409 || status === 503) return status;
+  return 502;
+}
+
 async function requestSynthesis(
   config: ModelGatewayConfig,
   input: VoiceSynthesisInput,
@@ -233,8 +238,12 @@ const transcribeRouteLayer = HttpRouter.add(
     const { response, payload } = upstream.value;
     if (!response.ok) {
       return HttpServerResponse.text(
-        response.status === 409 ? "Voice model gateway is busy." : "Transcription failed.",
-        { status: response.status === 409 ? 409 : 502 },
+        response.status === 409
+          ? "Voice model gateway is busy."
+          : response.status === 503
+            ? "Voice model gateway is unavailable."
+            : "Transcription failed.",
+        { status: mapVoiceGatewayFailureStatus(response.status) },
       );
     }
     const text = readTranscriptionText(payload);
