@@ -80,33 +80,22 @@ describe("VoiceChatPage", () => {
     );
   });
 
-  it("ends capture and returns to the same thread with history intact", () => {
+  it.each([
+    "Return to text conversation",
+    "End voice and return to text conversation",
+  ])("%s stops capture and requests text return", (label) => {
+    harness.micOff.mockClear();
     const messages = [
       { id: "message-1", role: "user", text: "Keep this history" },
     ] as Parameters<typeof VoiceChatPage>[0]["messages"];
-    const route = {
-      environmentId: "env-one",
-      threadId: "thread-two",
-      surface: "voice",
-      messages,
-    };
-    const onReturnToText = vi.fn(() => {
-      route.surface = "text";
-    });
+    const onReturnToText = vi.fn();
     const tree = renderVoicePage({ messages, onReturnToText });
-    const end = findByLabel(tree, "End voice and return to text conversation");
+    const control = findByLabel(tree, label);
 
-    expect(end).not.toBeNull();
-    end?.props.onClick();
+    expect(control).not.toBeNull();
+    control?.props.onClick();
 
     expect(harness.micOff).toHaveBeenCalledOnce();
     expect(onReturnToText).toHaveBeenCalledOnce();
-    expect(route).toEqual({
-      environmentId: "env-one",
-      threadId: "thread-two",
-      surface: "text",
-      messages,
-    });
-    expect(route.messages).toBe(messages);
   });
 });

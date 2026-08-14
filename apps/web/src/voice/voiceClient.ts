@@ -22,7 +22,9 @@ async function responseError(response: Response, fallback: string): Promise<Erro
 export function isRetryableVoiceTranscriptionError(error: unknown): boolean {
   return (
     error instanceof VoiceHttpError &&
-    (error.status === 409 || error.status === 429 || error.status >= 500)
+    (error.status === 409 ||
+      error.status === 429 ||
+      (error.status >= 500 && error.status !== 503))
   );
 }
 
