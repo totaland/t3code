@@ -261,7 +261,7 @@ import { createVoiceEnvironmentFetch } from "../voice/voiceEnvironmentFetch";
 import { refreshVoiceSendContext, resolveVoiceSendContext } from "../voice/voiceSendContext";
 import { voiceRouteSession } from "../voice/voiceRouteSession";
 import { VoicePcmStreamPlayer } from "../voice/voicePcmStream";
-import { buildTextThreadRoute, buildVoiceThreadRoute } from "../voice/voiceThreadRoutes";
+import { enterVoiceThread, returnToTextThread } from "../voice/voiceThreadRoutes";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -4906,10 +4906,22 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   const voiceSendContext =
-    refreshVoiceSendContext(voiceRouteSession.readSendContext(routeThreadKey), providerStatuses) ??
+    refreshVoiceSendContext(
+      voiceRouteSession.readSendContext(routeThreadKey),
+      providerStatuses,
+      settings,
+    ) ??
     resolveVoiceSendContext({
       modelSelection: activeThread?.modelSelection ?? activeProject?.defaultModelSelection,
+      preferredInstanceIds: [
+        composerActiveProvider,
+        activeThread?.session?.providerInstanceId,
+        activeThread?.modelSelection?.instanceId,
+        activeProject?.defaultModelSelection?.instanceId,
+      ],
       providers: providerStatuses,
+      selectedProvider,
+      settings,
     });
   const onSend = async (
     input?: {
@@ -6527,7 +6539,8 @@ function ChatViewContent(props: ChatViewProps) {
         onTranscript={onVoiceCapture}
         onReturnToText={() => {
           cancelVoiceTurn();
-          void navigate(buildTextThreadRoute(environmentId, threadId));
+          voiceRouteSession.closePlayback();
+          void returnToTextThread(navigate, environmentId, threadId);
         }}
       />
     );
@@ -6783,7 +6796,7 @@ function ChatViewContent(props: ChatViewProps) {
                               if (sendContext) {
                                 voiceRouteSession.rememberSendContext(routeThreadKey, sendContext);
                               }
-                              void navigate(buildVoiceThreadRoute(environmentId, threadId));
+                              void enterVoiceThread(navigate, environmentId, threadId);
                             }}
                             onVoicePlaybackUnlock={ensureVoicePlaybackContext}
                             onInterrupt={onInterrupt}

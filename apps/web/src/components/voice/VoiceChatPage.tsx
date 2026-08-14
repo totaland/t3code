@@ -134,7 +134,7 @@ export function VoiceChatPage(props: {
                 {session.unavailableReason ??
                   "Check browser microphone permission, or continue in this same text conversation."}
               </p>
-              <Button className="mt-3" variant="outline" onClick={props.onReturnToText}>
+              <Button className="mt-3" variant="outline" onClick={endAndReturn}>
                 Continue in text
               </Button>
             </div>
@@ -197,7 +197,7 @@ export function VoiceChatPage(props: {
           variant="outline"
           className="min-h-11 rounded-full"
           disabled={!session.enabled && !session.canTurnMicOn}
-          aria-pressed={!session.enabled}
+          aria-pressed={session.enabled}
           aria-label={
             session.enabled ? "Turn microphone capture off" : "Turn microphone capture on"
           }

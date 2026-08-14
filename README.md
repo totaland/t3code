@@ -61,32 +61,22 @@ We are very very early in this project. Expect bugs.
 
 We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
 
-## Local microphone voice bridge
+## Dedicated voice conversation
 
-T3 Code can proxy microphone audio to the loopback-only `backend-voice` model
-gateway. The browser records a push-to-talk WAV, T3 sends the transcript as the
-current agent turn, then synthesizes and queues completed sentences while the
-reply streams. Any final incomplete sentence is spoken when the message
-completes. T3 proxies the gateway's PCM16 body as a real-time stream, and the
-browser schedules small PCM buffers on one audio timeline so playback starts
-before synthesis finishes. The composer selector exposes `Auto`, `Qwen3-TTS`,
-`Kokoro`, and `Step-Audio-EditX`; Step uses the trusted server-side James
-reference, remains full-buffer at the model layer, and never accepts an
-arbitrary client voice path.
+The waveform in text chat primes audio from its click and opens a dedicated
+voice page for the same environment and thread. The local model gateway handles
+wake-phrase transcription and streams PCM16 speech while the reply is generated;
+speaking over Mai interrupts playback and the active turn. The voice selector
+supports `Auto`, `Qwen3-TTS`, `Kokoro`, and `Step-Audio-EditX`.
 
-Hands-free listening is off by default. Turn on the waveform button, allow
-microphone access, then say **“Hey Mai.”** Keep speaking naturally: a brief
-trailing pause submits the command without a button press. T3 resumes listening
-while the turn runs, so follow-up commands do not require the wake phrase and
-speaking over Mai interrupts the current reply.
-Say **“go to sleep”** or press <kbd>Esc</kbd> to return to visibly sleeping,
-wake-only listening. The waveform button can disable
-wake listening completely, and the manual push-to-talk microphone remains
-available. On iPhone browsers, where continuous WebKit speech recognition is
-unreliable, T3 uses the existing Whisper endpoint plus local silence detection.
+Say **“Hey Mai”** and speak naturally to submit hands-free. **Sleep** pauses
+conversation capture while keeping wake-word detection active. **Mic off** stops
+capture completely. **End** returns to the unchanged text conversation and its
+existing history. If local transcription is unavailable, T3 can offer browser
+speech recognition only after explicit consent because the browser may process
+audio online. LiveKit, SIP, and phone bridging remain deferred.
 Desktop Chrome uses that same local pipeline; native browser speech recognition
-is only a fallback when Web Audio microphone capture is unavailable.
-Other supported browsers use their speech-recognition service.
+is only an explicitly approved fallback when local microphone capture is unavailable.
 
 Configure the T3 server, not the browser:
 

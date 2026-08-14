@@ -18,6 +18,7 @@ type LocalAudioWakePhraseListenerInput = {
   readonly onWake?: () => void;
   readonly onStateChange?: (state: VoiceWakePhraseState) => void;
   readonly onError?: (error: unknown) => void;
+  readonly shouldRetryError?: (error: unknown) => boolean;
   readonly audioContextConstructor?: AudioContextConstructor | null;
   readonly getUserMedia?: ((constraints: MediaStreamConstraints) => Promise<MediaStream>) | null;
   readonly schedule?: (callback: () => void, delayMs: number) => unknown;
@@ -139,6 +140,15 @@ export function createLocalAudioWakePhraseListener(
     if (session === target) session = null;
   };
 
+  const retryCapture = (target: LocalAudioSession) => {
+    if (session !== target || !enabled || paused) return;
+    resetAudio(target);
+    input.onTranscript?.("");
+    input.onNoCommand?.();
+    if (awake) emitState("awake");
+    else scheduleProbe(target);
+  };
+
   const blockCapture = (target: LocalAudioSession, error: unknown) => {
     if (session !== target || !enabled || paused) return;
     enabled = false;
@@ -182,6 +192,7 @@ export function createLocalAudioWakePhraseListener(
       return;
     }
     if (command.length === 0) {
+      input.onNoCommand?.();
       resetAudio(target);
       emitState("awake");
       return;
@@ -224,7 +235,8 @@ export function createLocalAudioWakePhraseListener(
     } catch (error) {
       if (session !== target || !enabled || paused || !awake || controller.signal.aborted) return;
       target.transcriptionAbortController = null;
-      blockCapture(target, error);
+      if (input.shouldRetryError?.(error)) retryCapture(target);
+      else blockCapture(target, error);
     }
   };
 
@@ -251,7 +263,8 @@ export function createLocalAudioWakePhraseListener(
     } catch (error) {
       if (session !== target || !enabled || paused || controller.signal.aborted) return;
       target.transcriptionAbortController = null;
-      blockCapture(target, error);
+      if (input.shouldRetryError?.(error)) retryCapture(target);
+      else blockCapture(target, error);
       return;
     }
     if (session !== target || !enabled || paused || controller.signal.aborted) return;

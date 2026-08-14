@@ -1,6 +1,7 @@
 import { Children, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { enterVoiceThread } from "../../voice/voiceThreadRoutes";
 import { ComposerVoiceWakePhraseButton } from "./ComposerVoiceWakePhraseButton";
 
 type TriggerElement = ReactElement<{
@@ -25,20 +26,26 @@ function triggerFor(props?: {
 }
 
 describe("ComposerVoiceWakePhraseButton", () => {
-  it("uses the waveform gesture to prime audio before entering voice", () => {
+  it("uses the waveform gesture to prime audio before navigating to the exact voice thread", () => {
     const order: string[] = [];
+    const navigate = vi.fn();
     const trigger = triggerFor({
       onPlaybackUnlock: vi.fn(async () => {
         order.push("prime");
       }),
       onEnterVoice: vi.fn(() => {
         order.push("navigate");
+        enterVoiceThread(navigate, "env-one", "thread-two");
       }),
     });
 
     trigger.props.render.props.onClick();
 
     expect(order).toEqual(["prime", "navigate"]);
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/voice/$environmentId/$threadId",
+      params: { environmentId: "env-one", threadId: "thread-two" },
+    });
     expect(trigger.props.render.props["aria-label"]).toBe("Open voice conversation");
   });
 

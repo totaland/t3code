@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { browserApiCorsHeaders } from "../httpCors.ts";
 import {
   fetchModelGateway,
   isSupportedVoiceBackend,
   requestTranscription,
+  readTranscriptionText,
   resolveModelGatewayConfig,
 } from "./http.ts";
 
@@ -92,5 +94,46 @@ describe("backend-voice backend IDs", () => {
     expect(isSupportedVoiceBackend("step_audio_editx")).toBe(true);
     expect(isSupportedVoiceBackend("qwen_voice_clone")).toBe(false);
     expect(isSupportedVoiceBackend("step_audio")).toBe(false);
+  });
+});
+
+describe("backend-voice transport contracts", () => {
+  it("propagates request cancellation to the model gateway", async () => {
+    const gateway = resolveModelGatewayConfig({
+      modelGatewayUrl: "http://localhost:8091",
+      modelGatewayApiKey: "local-test-key-123456",
+    });
+    expect(gateway).not.toBeNull();
+    const requestAbort = new AbortController();
+    const gatewaySignals: AbortSignal[] = [];
+    const response = fetchModelGateway(
+      gateway!,
+      "/v1/stt",
+      { method: "POST", signal: requestAbort.signal },
+      async (_input, init) => {
+        if (init?.signal) gatewaySignals.push(init.signal);
+        return new Response("ok");
+      },
+    );
+
+    requestAbort.abort();
+
+    await expect(response).resolves.toBeInstanceOf(Response);
+    expect(gatewaySignals[0]).not.toBe(requestAbort.signal);
+    expect(gatewaySignals[0]?.aborted).toBe(true);
+  });
+
+  it("preserves empty transcripts as no-command responses", () => {
+    expect(readTranscriptionText({ text: "   " })).toBe("");
+    expect(readTranscriptionText({ text: " hello " })).toBe("hello");
+    expect(readTranscriptionText({ text: "x".repeat(4_001) })).toBeNull();
+    expect(readTranscriptionText({})).toBeNull();
+  });
+
+  it("exposes streamed PCM metadata to cross-origin browsers", () => {
+    expect(browserApiCorsHeaders["access-control-expose-headers"].split(", ")).toEqual([
+      "X-Audio-Channels",
+      "X-Audio-Sample-Rate",
+    ]);
   });
 });

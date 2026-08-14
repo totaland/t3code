@@ -83,10 +83,11 @@ export async function fetchModelGateway(
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${config.apiKey}`);
+  const timeoutSignal = AbortSignal.timeout(MODEL_GATEWAY_TIMEOUT_MS);
   return fetchImplementation(new URL(path, config.baseUrl), {
     ...init,
     headers,
-    signal: AbortSignal.timeout(MODEL_GATEWAY_TIMEOUT_MS),
+    signal: init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal,
   });
 }
 
@@ -95,6 +96,7 @@ export async function requestTranscription(
   wav: Uint8Array,
   replyBackend: string,
   fetchImplementation: VoiceFetch = fetch,
+  signal?: AbortSignal,
 ) {
   const response = await fetchModelGateway(
     config,
@@ -106,6 +108,7 @@ export async function requestTranscription(
         "x-tts-backend": replyBackend,
       },
       body: wav,
+      signal,
     },
     fetchImplementation,
   );
@@ -113,11 +116,29 @@ export async function requestTranscription(
   return { response, payload };
 }
 
-async function requestSynthesis(config: ModelGatewayConfig, input: VoiceSynthesisInput) {
+export function readTranscriptionText(payload: unknown): string | null {
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("text" in payload) ||
+    typeof payload.text !== "string"
+  ) {
+    return null;
+  }
+  const text = payload.text.trim();
+  return text.length <= MAX_TRANSCRIPT_TEXT_LENGTH ? text : null;
+}
+
+async function requestSynthesis(
+  config: ModelGatewayConfig,
+  input: VoiceSynthesisInput,
+  signal?: AbortSignal,
+) {
   return fetchModelGateway(config, "/v1/tts", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: encodeUnknownJson(input),
+    signal,
   });
 }
 
@@ -203,7 +224,7 @@ const transcribeRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Unknown voice backend.", { status: 422 });
     }
     const upstream = yield* Effect.tryPromise({
-      try: () => requestTranscription(gateway, wav, replyBackend),
+      try: (signal) => requestTranscription(gateway, wav, replyBackend, fetch, signal),
       catch: (cause) => new VoiceProxyError({ cause }),
     }).pipe(Effect.option);
     if (upstream._tag === "None") {
@@ -216,14 +237,8 @@ const transcribeRouteLayer = HttpRouter.add(
         { status: response.status === 409 ? 409 : 502 },
       );
     }
-    const text =
-      typeof payload === "object" &&
-      payload !== null &&
-      "text" in payload &&
-      typeof payload.text === "string"
-        ? payload.text.trim()
-        : "";
-    if (!text || text.length > MAX_TRANSCRIPT_TEXT_LENGTH) {
+    const text = readTranscriptionText(payload);
+    if (text === null) {
       return HttpServerResponse.text("Voice model gateway returned an invalid transcript.", {
         status: 502,
       });
@@ -271,7 +286,7 @@ const synthesizeRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Unknown voice backend.", { status: 422 });
     }
     const upstream = yield* Effect.tryPromise({
-      try: () => requestSynthesis(gateway, { text, backend }),
+      try: (signal) => requestSynthesis(gateway, { text, backend }, signal),
       catch: (cause) => new VoiceProxyError({ cause }),
     }).pipe(Effect.option);
     if (upstream._tag === "None") {

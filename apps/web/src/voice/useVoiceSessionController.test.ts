@@ -64,6 +64,7 @@ import {
   resolveVoiceCaptureMode,
   shouldIgnoreVoiceListenerState,
   shouldAutoStartVoiceCapture,
+  shouldRecoverLocalVoiceGateway,
   useVoiceSessionController,
 } from "./useVoiceSessionController";
 
@@ -271,4 +272,39 @@ describe("useVoiceSessionController", () => {
     expect(shouldIgnoreVoiceListenerState(true, "off")).toBe(true);
     expect(shouldIgnoreVoiceListenerState(false, "off")).toBe(false);
   });
+
+    it("does not start capture while the route is disabled", () => {
+      createController({ disabled: true });
+
+      harness.effects[0]?.();
+
+      expect(harness.listener.start).not.toHaveBeenCalled();
+      expect(harness.listenerInput).toBeNull();
+    });
+
+    it("offers browser fallback only after local capture becomes unavailable", () => {
+      harness.browserSupported = true;
+      const controller = createController();
+
+      controller.micOff();
+
+      expect(controller.canEnableBrowserFallback).toBe(false);
+    });
+
+    it("recovers pending local capture when its gateway connects", () => {
+      expect(
+        shouldRecoverLocalVoiceGateway({
+          pending: true,
+          httpBaseUrl: "http://localhost",
+          captureMode: "local-audio",
+        }),
+      ).toBe(true);
+      expect(
+        shouldRecoverLocalVoiceGateway({
+          pending: false,
+          httpBaseUrl: "http://localhost",
+          captureMode: "local-audio",
+        }),
+      ).toBe(false);
+    });
 });

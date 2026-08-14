@@ -5,9 +5,25 @@ function voiceEndpoint(baseUrl: string, path: string): URL {
   return new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
 }
 
+export class VoiceHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "VoiceHttpError";
+  }
+}
 async function responseError(response: Response, fallback: string): Promise<Error> {
   const detail = (await response.text()).trim();
-  return new Error(detail || fallback);
+  return new VoiceHttpError(detail || fallback, response.status);
+}
+
+export function isRetryableVoiceTranscriptionError(error: unknown): boolean {
+  return (
+    error instanceof VoiceHttpError &&
+    (error.status === 409 || error.status === 429 || error.status >= 500)
+  );
 }
 
 export async function transcribeVoiceWav(input: {

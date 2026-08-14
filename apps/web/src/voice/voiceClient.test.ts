@@ -5,6 +5,7 @@ import {
   resolveVoiceTurnResponse,
   synthesizeVoiceReplyStream,
   transcribeVoiceWav,
+  isRetryableVoiceTranscriptionError,
   type VoiceFetch,
 } from "./voiceClient";
 
@@ -30,6 +31,24 @@ describe("local voice client", () => {
     expect(new Headers(requests[0]?.init?.headers).get("x-tts-backend")).toBe("auto");
   });
 
+
+    it("classifies busy gateway responses as retryable", async () => {
+      const request = transcribeVoiceWav({
+        httpBaseUrl: "http://localhost",
+        wav: new Blob(),
+        fetchImplementation: async () => new Response("busy", { status: 409 }),
+      });
+
+      const error = await request.catch((cause: unknown) => cause);
+      expect(isRetryableVoiceTranscriptionError(error)).toBe(true);
+
+      const denied = await transcribeVoiceWav({
+        httpBaseUrl: "http://localhost",
+        wav: new Blob(),
+        fetchImplementation: async () => new Response("denied", { status: 403 }),
+      }).catch((cause: unknown) => cause);
+      expect(isRetryableVoiceTranscriptionError(denied)).toBe(false);
+    });
   it("rejects invalid streaming audio metadata", async () => {
     const invalidFetch: VoiceFetch = async () => new Response("bad");
 

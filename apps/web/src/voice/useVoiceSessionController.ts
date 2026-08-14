@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { transcribeVoiceWav, type VoiceFetch } from "./voiceClient";
+import {
+  isRetryableVoiceTranscriptionError,
+  transcribeVoiceWav,
+  type VoiceFetch,
+} from "./voiceClient";
 import {
   createVoiceWakePhraseListener,
   getVoiceWakePhraseMode,
@@ -26,6 +30,20 @@ export function resolveVoiceCaptureMode(
 
 export function shouldAutoStartVoiceCapture(mode: VoiceCaptureMode): boolean {
   return mode === "local-audio";
+}
+
+export function shouldRecoverLocalVoiceGateway(input: {
+  readonly pending: boolean;
+  readonly httpBaseUrl: string | null;
+  readonly disabled?: boolean;
+  readonly captureMode: VoiceCaptureMode;
+}): boolean {
+  return (
+    input.pending &&
+    Boolean(input.httpBaseUrl) &&
+    !input.disabled &&
+    input.captureMode === "local-audio"
+  );
 }
 
 export function isVoiceCapabilityUnavailable(
@@ -79,6 +97,9 @@ export function useVoiceSessionController(props: {
   );
   const listenerRef = useRef<VoiceWakePhraseListener | null>(null);
   const blockedRef = useRef(initialUnavailableReason !== null);
+  const gatewayRecoveryPendingRef = useRef(
+    detectedCaptureMode === "local-audio" && !props.httpBaseUrl,
+  );
   const bargeInPromiseRef = useRef<Promise<boolean> | null>(null);
   const sessionGenerationRef = useRef(0);
   const propsRef = useRef(props);
@@ -99,7 +120,7 @@ export function useVoiceSessionController(props: {
   };
 
   useEffect(() => {
-    if (!enabled || effectiveCaptureMode === "unsupported") return;
+    if (props.disabled || !enabled || effectiveCaptureMode === "unsupported") return;
     if (effectiveCaptureMode === "local-audio" && !propsRef.current.httpBaseUrl) return;
     if (effectiveCaptureMode === "browser-fallback" && !browserFallbackApproved) return;
 
@@ -217,6 +238,7 @@ export function useVoiceSessionController(props: {
               }
               return transcript;
             },
+            shouldRetryError: isRetryableVoiceTranscriptionError,
             onError: (error) => {
               markBlocked(
                 error instanceof Error && error.message
@@ -247,7 +269,7 @@ export function useVoiceSessionController(props: {
         invalidateSession();
       }
     };
-  }, [browserFallbackApproved, effectiveCaptureMode, enabled]);
+  }, [browserFallbackApproved, effectiveCaptureMode, enabled, props.disabled]);
 
   useEffect(() => {
     const listener = listenerRef.current;
@@ -280,8 +302,27 @@ export function useVoiceSessionController(props: {
     setSleeping(true);
   }, []);
 
+  useEffect(() => {
+    if (
+      !shouldRecoverLocalVoiceGateway({
+        pending: gatewayRecoveryPendingRef.current,
+        httpBaseUrl: props.httpBaseUrl,
+        disabled: props.disabled,
+        captureMode: detectedCaptureMode,
+      })
+    ) {
+      return;
+    }
+    gatewayRecoveryPendingRef.current = false;
+    blockedRef.current = false;
+    setEnabled(true);
+    setListenerState("starting");
+    setUnavailableReason(null);
+  }, [detectedCaptureMode, props.disabled, props.httpBaseUrl]);
+
   const micOff = useCallback(() => {
     const hadBargeIn = invalidateSession();
+    gatewayRecoveryPendingRef.current = false;
     blockedRef.current = false;
     listenerRef.current?.stop();
     listenerRef.current = null;
@@ -330,7 +371,10 @@ export function useVoiceSessionController(props: {
 
   const awake = listenerState === "awake";
   const canEnableBrowserFallback =
-    browserFallbackSupported && !browserFallbackApproved && !props.disabled;
+    browserFallbackSupported &&
+    !browserFallbackApproved &&
+    !props.disabled &&
+    (detectedCaptureMode === "browser-fallback" || listenerState === "blocked");
   const canTurnMicOn =
     !props.disabled &&
     effectiveCaptureMode !== "unsupported" &&
