@@ -60,7 +60,8 @@ export function VoiceChatPage(props: {
       <AudioLinesIcon className="size-14" aria-hidden />
     );
 
-  const endAndReturn = () => {
+  const endAndReturn = (event?: React.MouseEvent<HTMLButtonElement>) => {
+    event?.stopPropagation();
     session.micOff();
     props.onReturnToText();
   };

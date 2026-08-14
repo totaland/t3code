@@ -39,11 +39,16 @@ vi.mock("../../voice/useVoiceSessionController", () => ({
 
 import { VoiceChatPage } from "./VoiceChatPage";
 
-function findByLabel(node: ReactNode, label: string): ReactElement<{ onClick: () => void }> | null {
+function findByLabel(
+  node: ReactNode,
+  label: string,
+): ReactElement<{ onClick: (event: { stopPropagation: () => void }) => void }> | null {
   if (!node || typeof node !== "object" || !("props" in node)) return null;
   const element = node as ReactElement<Record<string, unknown>>;
   if (element.props["aria-label"] === label) {
-    return element as ReactElement<{ onClick: () => void }>;
+    return element as ReactElement<{
+      onClick: (event: { stopPropagation: () => void }) => void;
+    }>;
   }
   for (const child of Children.toArray(element.props.children as ReactNode)) {
     const match = findByLabel(child, label);
@@ -93,9 +98,11 @@ describe("VoiceChatPage", () => {
     const control = findByLabel(tree, label);
 
     expect(control).not.toBeNull();
-    control?.props.onClick();
+    const stopPropagation = vi.fn();
+    control?.props.onClick({ stopPropagation });
 
     expect(harness.micOff).toHaveBeenCalledOnce();
     expect(onReturnToText).toHaveBeenCalledOnce();
+    expect(stopPropagation).toHaveBeenCalledOnce();
   });
 });
