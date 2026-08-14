@@ -126,11 +126,7 @@ vi.mock("../components/ui/button", async () => {
       if (props["aria-label"] && props.onClick) {
         harness.controls.set(props["aria-label"], props.onClick);
       }
-      return React.createElement(
-        "button",
-        { "aria-label": props["aria-label"] },
-        props.children,
-      );
+      return React.createElement("button", { "aria-label": props["aria-label"] }, props.children);
     },
   };
 });
@@ -175,9 +171,8 @@ vi.mock("../voice/useVoiceSessionController", () => ({
 }));
 
 vi.mock("../composerDraftStore", async () => {
-  const actual = await vi.importActual<typeof import("../composerDraftStore")>(
-    "../composerDraftStore",
-  );
+  const actual =
+    await vi.importActual<typeof import("../composerDraftStore")>("../composerDraftStore");
   const draft = {
     prompt: "",
     images: [],
@@ -226,9 +221,7 @@ vi.mock("../composerDraftStore", async () => {
 });
 
 vi.mock("../promptStashStore", async () => {
-  const actual = await vi.importActual<typeof import("../promptStashStore")>(
-    "../promptStashStore",
-  );
+  const actual = await vi.importActual<typeof import("../promptStashStore")>("../promptStashStore");
   const store = {
     entries: [],
     enqueue: vi.fn(),
@@ -285,9 +278,7 @@ vi.mock("../state/use-atom-command", () => ({
 }));
 
 vi.mock("@effect/atom-react", async () => {
-  const actual = await vi.importActual<typeof import("@effect/atom-react")>(
-    "@effect/atom-react",
-  );
+  const actual = await vi.importActual<typeof import("@effect/atom-react")>("@effect/atom-react");
   return {
     ...actual,
     useAtomValue: () => ({
@@ -356,12 +347,14 @@ vi.mock("../uiStateStore", () => {
 });
 
 vi.mock("../terminalUiStateStore", async () => {
-  const actual = await vi.importActual<typeof import("../terminalUiStateStore")>(
-    "../terminalUiStateStore",
-  );
+  const actual =
+    await vi.importActual<typeof import("../terminalUiStateStore")>("../terminalUiStateStore");
   const functions = new Proxy(
     { terminalUiStateByThreadKey: {} },
-    { get: (target, property) => property in target ? target[property as keyof typeof target] : vi.fn() },
+    {
+      get: (target, property) =>
+        property in target ? target[property as keyof typeof target] : vi.fn(),
+    },
   );
   return {
     ...actual,
@@ -385,9 +378,8 @@ vi.mock("../rightPanelStore", async () => {
 });
 
 vi.mock("../previewStateStore", async () => {
-  const actual = await vi.importActual<typeof import("../previewStateStore")>(
-    "../previewStateStore",
-  );
+  const actual =
+    await vi.importActual<typeof import("../previewStateStore")>("../previewStateStore");
   return { ...actual, useThreadPreviewState: () => ({ sessions: [] }) };
 });
 
@@ -457,11 +449,7 @@ function createHarness(history: RouterHistory) {
       const matchId = router.state.matches.at(-1)?.id;
       return matchId
         ? renderToStaticMarkup(
-            createElement(
-              RouterContextProvider,
-              { router },
-              createElement(Match, { matchId }),
-            ),
+            createElement(RouterContextProvider, { router }, createElement(Match, { matchId })),
           )
         : "";
     },
@@ -519,10 +507,7 @@ async function openVoice(
 }
 
 describe("voice thread navigation", () => {
-  it.each([
-    "Return to text conversation",
-    "End voice and return to text conversation",
-  ] as const)(
+  it.each(["Return to text conversation", "End voice and return to text conversation"] as const)(
     "%s preserves the routed thread and rendered history",
     async (controlLabel) => {
       const { app, html } = await openVoice(controlLabel);

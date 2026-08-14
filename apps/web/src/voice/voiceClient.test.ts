@@ -31,38 +31,37 @@ describe("local voice client", () => {
     expect(new Headers(requests[0]?.init?.headers).get("x-tts-backend")).toBe("auto");
   });
 
-
-    it("classifies busy gateway responses as retryable", async () => {
-      const request = transcribeVoiceWav({
-        httpBaseUrl: "http://localhost",
-        wav: new Blob(),
-        fetchImplementation: async () => new Response("busy", { status: 409 }),
-      });
-
-      const error = await request.catch((cause: unknown) => cause);
-      expect(isRetryableVoiceTranscriptionError(error)).toBe(true);
-
-      const denied = await transcribeVoiceWav({
-        httpBaseUrl: "http://localhost",
-        wav: new Blob(),
-        fetchImplementation: async () => new Response("denied", { status: 403 }),
-      }).catch((cause: unknown) => cause);
-      expect(isRetryableVoiceTranscriptionError(denied)).toBe(false);
-
-      const unavailable = await transcribeVoiceWav({
-        httpBaseUrl: "http://localhost",
-        wav: new Blob(),
-        fetchImplementation: async () => new Response("gateway unavailable", { status: 503 }),
-      }).catch((cause: unknown) => cause);
-      expect(isRetryableVoiceTranscriptionError(unavailable)).toBe(false);
-
-      const transient = await transcribeVoiceWav({
-        httpBaseUrl: "http://localhost",
-        wav: new Blob(),
-        fetchImplementation: async () => new Response("bad gateway", { status: 502 }),
-      }).catch((cause: unknown) => cause);
-      expect(isRetryableVoiceTranscriptionError(transient)).toBe(true);
+  it("classifies busy gateway responses as retryable", async () => {
+    const request = transcribeVoiceWav({
+      httpBaseUrl: "http://localhost",
+      wav: new Blob(),
+      fetchImplementation: async () => new Response("busy", { status: 409 }),
     });
+
+    const error = await request.catch((cause: unknown) => cause);
+    expect(isRetryableVoiceTranscriptionError(error)).toBe(true);
+
+    const denied = await transcribeVoiceWav({
+      httpBaseUrl: "http://localhost",
+      wav: new Blob(),
+      fetchImplementation: async () => new Response("denied", { status: 403 }),
+    }).catch((cause: unknown) => cause);
+    expect(isRetryableVoiceTranscriptionError(denied)).toBe(false);
+
+    const unavailable = await transcribeVoiceWav({
+      httpBaseUrl: "http://localhost",
+      wav: new Blob(),
+      fetchImplementation: async () => new Response("gateway unavailable", { status: 503 }),
+    }).catch((cause: unknown) => cause);
+    expect(isRetryableVoiceTranscriptionError(unavailable)).toBe(false);
+
+    const transient = await transcribeVoiceWav({
+      httpBaseUrl: "http://localhost",
+      wav: new Blob(),
+      fetchImplementation: async () => new Response("bad gateway", { status: 502 }),
+    }).catch((cause: unknown) => cause);
+    expect(isRetryableVoiceTranscriptionError(transient)).toBe(true);
+  });
   it("rejects invalid streaming audio metadata", async () => {
     const invalidFetch: VoiceFetch = async () => new Response("bad");
 

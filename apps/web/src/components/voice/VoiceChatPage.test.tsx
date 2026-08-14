@@ -85,24 +85,24 @@ describe("VoiceChatPage", () => {
     );
   });
 
-  it.each([
-    "Return to text conversation",
-    "End voice and return to text conversation",
-  ])("%s stops capture and requests text return", (label) => {
-    harness.micOff.mockClear();
-    const messages = [
-      { id: "message-1", role: "user", text: "Keep this history" },
-    ] as Parameters<typeof VoiceChatPage>[0]["messages"];
-    const onReturnToText = vi.fn();
-    const tree = renderVoicePage({ messages, onReturnToText });
-    const control = findByLabel(tree, label);
+  it.each(["Return to text conversation", "End voice and return to text conversation"])(
+    "%s stops capture and requests text return",
+    (label) => {
+      harness.micOff.mockClear();
+      const messages = [{ id: "message-1", role: "user", text: "Keep this history" }] as Parameters<
+        typeof VoiceChatPage
+      >[0]["messages"];
+      const onReturnToText = vi.fn();
+      const tree = renderVoicePage({ messages, onReturnToText });
+      const control = findByLabel(tree, label);
 
-    expect(control).not.toBeNull();
-    const stopPropagation = vi.fn();
-    control?.props.onClick({ stopPropagation });
+      expect(control).not.toBeNull();
+      const stopPropagation = vi.fn();
+      control?.props.onClick({ stopPropagation });
 
-    expect(harness.micOff).toHaveBeenCalledOnce();
-    expect(onReturnToText).toHaveBeenCalledOnce();
-    expect(stopPropagation).toHaveBeenCalledOnce();
-  });
+      expect(harness.micOff).toHaveBeenCalledOnce();
+      expect(onReturnToText).toHaveBeenCalledOnce();
+      expect(stopPropagation).toHaveBeenCalledOnce();
+    },
+  );
 });

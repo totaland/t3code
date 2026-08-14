@@ -1,8 +1,8 @@
 # Voice conversations
 
-Use the waveform button beside the composer to open the dedicated voice page for the current
-environment and thread. The button primes browser audio during the click, then navigates; it does
-not capture audio while the text-chat page remains visible. Say “Hey Mai” once to wake the
+Use the waveform button beside the composer to open `/voice/<environmentId>/<threadId>` for the
+current environment and thread. The button primes browser audio during the click, then navigates;
+it does not capture audio while the text-chat page remains visible. Say “Hey Mai” once to wake the
 conversation, then speak commands naturally. Pause briefly to send each command.
 
 The waveform stays listening while Mai works and speaks. To change direction, start speaking again:
@@ -16,7 +16,7 @@ voice resources and return to the same text thread, where voice prompts and repl
 message history.
 
 The configured local model-gateway transcription and speech services are the default privacy
-boundary. If local audio capture is unavailable but browser speech recognition exists, T3 explains
+boundary. If local transcription is unavailable but browser speech recognition exists, T3 explains
 that browser recognition may process audio online and requires an explicit opt-in; it never switches
 silently. Permission denial and unsupported browsers leave the thread usable through **Continue in
 text**.

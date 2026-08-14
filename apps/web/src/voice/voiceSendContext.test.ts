@@ -53,10 +53,7 @@ describe("voice send context", () => {
       instanceId: "codex-work",
       models: [{ slug: "gpt-5.1", name: "GPT-5.1", capabilities: {}, isDefault: true }],
     });
-    const context = resolve(selection, [
-      provider({ availability: "unavailable" }),
-      fallback,
-    ]);
+    const context = resolve(selection, [provider({ availability: "unavailable" }), fallback]);
 
     expect(context).toMatchObject({
       selectedModel: "gpt-5.1",

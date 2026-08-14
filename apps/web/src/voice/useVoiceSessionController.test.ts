@@ -220,7 +220,7 @@ describe("useVoiceSessionController", () => {
     const submissionFinished = new Promise<void>((resolve) => {
       finishSubmission = resolve;
     });
-    const controller = createController({
+    createController({
       onTranscript: () => submissionFinished,
     });
     harness.effects[0]?.();
@@ -273,38 +273,38 @@ describe("useVoiceSessionController", () => {
     expect(shouldIgnoreVoiceListenerState(false, "off")).toBe(false);
   });
 
-    it("does not start capture while the route is disabled", () => {
-      createController({ disabled: true });
+  it("does not start capture while the route is disabled", () => {
+    createController({ disabled: true });
 
-      harness.effects[0]?.();
+    harness.effects[0]?.();
 
-      expect(harness.listener.start).not.toHaveBeenCalled();
-      expect(harness.listenerInput).toBeNull();
-    });
+    expect(harness.listener.start).not.toHaveBeenCalled();
+    expect(harness.listenerInput).toBeNull();
+  });
 
-    it("offers browser fallback only after local capture becomes unavailable", () => {
-      harness.browserSupported = true;
-      const controller = createController();
+  it("offers browser fallback only after local capture becomes unavailable", () => {
+    harness.browserSupported = true;
+    const controller = createController();
 
-      controller.micOff();
+    controller.micOff();
 
-      expect(controller.canEnableBrowserFallback).toBe(false);
-    });
+    expect(controller.canEnableBrowserFallback).toBe(false);
+  });
 
-    it("recovers pending local capture when its gateway connects", () => {
-      expect(
-        shouldRecoverLocalVoiceGateway({
-          pending: true,
-          httpBaseUrl: "http://localhost",
-          captureMode: "local-audio",
-        }),
-      ).toBe(true);
-      expect(
-        shouldRecoverLocalVoiceGateway({
-          pending: false,
-          httpBaseUrl: "http://localhost",
-          captureMode: "local-audio",
-        }),
-      ).toBe(false);
-    });
+  it("recovers pending local capture when its gateway connects", () => {
+    expect(
+      shouldRecoverLocalVoiceGateway({
+        pending: true,
+        httpBaseUrl: "http://localhost",
+        captureMode: "local-audio",
+      }),
+    ).toBe(true);
+    expect(
+      shouldRecoverLocalVoiceGateway({
+        pending: false,
+        httpBaseUrl: "http://localhost",
+        captureMode: "local-audio",
+      }),
+    ).toBe(false);
+  });
 });

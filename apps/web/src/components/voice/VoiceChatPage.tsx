@@ -73,7 +73,7 @@ export function VoiceChatPage(props: {
       aria-label="Voice conversation"
       className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
     >
-      <header className="flex min-h-14 items-center gap-3 border-b border-border/60 px-[calc(env(safe-area-inset-left)+1rem)] pr-[calc(env(safe-area-inset-right)+1rem)]">
+      <header className="relative z-[60] flex min-h-14 items-center gap-3 border-b border-border/60 bg-background px-[calc(env(safe-area-inset-left)+1rem)] pr-[calc(env(safe-area-inset-right)+1rem)]">
         <Button
           type="button"
           variant="ghost"
