@@ -73,32 +73,8 @@ We are (mostly) not accepting contributions yet. Small fixes may be considered. 
 
 ## Dedicated voice conversation
 
-The waveform in text chat primes audio from its click and opens a dedicated
-voice page for the same environment and thread. The local model gateway handles
-wake-phrase transcription and streams PCM16 speech while the reply is generated;
-speaking over Mai interrupts playback and the active turn. The voice selector
-supports `Auto`, `Qwen3-TTS`, `Kokoro`, and `Step-Audio-EditX`.
-
-Say **“Hey Mai”** and speak naturally to submit hands-free. **Sleep** pauses
-conversation capture while keeping wake-word detection active. **Mic off** stops
-capture completely. **End** returns to the unchanged text conversation and its
-existing history. If local transcription is unavailable, T3 can offer browser
-speech recognition only after explicit consent because the browser may process
-audio online. LiveKit, SIP, and phone bridging remain deferred.
-Desktop Chrome uses that same local pipeline; native browser speech recognition
-is only an explicitly approved fallback when local microphone capture is unavailable.
-
-Configure the T3 server, not the browser:
-
-```dotenv
-T3CODE_MODEL_GATEWAY_URL="http://127.0.0.1:8091"
-T3CODE_MODEL_GATEWAY_API_KEY="the same value as backend-voice MODEL_GATEWAY_API_KEY"
-```
-
-Remote/mobile microphone access requires a secure browser context. Use HTTPS
-(for example Tailscale Serve) rather than plain Tailnet HTTP. The API key stays
-server-side, and the voice proxy routes require an authenticated T3 session
-with environment operate scope.
+The waveform in text chat opens a voice-first page for the same thread. See the
+[voice conversation guide](./docs/user/voice-conversations.md) for setup, privacy, and controls.
 
 ## Documentation
 

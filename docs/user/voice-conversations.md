@@ -21,5 +21,16 @@ that browser recognition may process audio online and requires an explicit opt-i
 silently. Permission denial and unsupported browsers leave the thread usable through **Continue in
 text**.
 
+Configure the T3 server, not the browser:
+
+```dotenv
+T3CODE_MODEL_GATEWAY_URL="http://127.0.0.1:8091"
+T3CODE_MODEL_GATEWAY_API_KEY="the same value as backend-voice MODEL_GATEWAY_API_KEY"
+```
+
+Remote microphone access requires a secure browser context. Use HTTPS rather than plain Tailnet
+HTTP. The API key stays server-side, and the voice proxy routes require an authenticated T3 session
+with environment operate scope.
+
 This page does not use LiveKit Agents, Expressive mode, SIP, phone bridging, or Company Conductor
 backend voice. Those integrations remain deferred and separate from T3's local STT/TTS gateway.
