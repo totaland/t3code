@@ -327,6 +327,7 @@ import {
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  queueVoiceSpeechChunk,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
@@ -5599,13 +5600,11 @@ function ChatViewContent(props: ChatViewProps) {
 
     const previousSpokenOffset =
       pendingVoiceTurn.spokenAssistantOffsets.get(resolution.messageId) ?? 0;
-    pendingVoiceTurn.spokenAssistantOffsets.set(
-      resolution.messageId,
-      previousSpokenOffset + resolution.text.length,
-    );
+    const nextSpokenOffset = previousSpokenOffset + resolution.text.length;
     voiceEmptySinceRef.current = null;
     const speechText = normalizeAssistantTextForSpeech(resolution.text);
     if (!speechText) {
+      pendingVoiceTurn.spokenAssistantOffsets.set(resolution.messageId, nextSpokenOffset);
       setVoicePhase("waiting");
       setVoiceResolutionTick((tick) => (tick + 1) % Number.MAX_SAFE_INTEGER);
       return;
@@ -5645,14 +5644,20 @@ function ChatViewContent(props: ChatViewProps) {
 
       const player = voicePcmStreamPlayerRef.current ?? new VoicePcmStreamPlayer(context);
       voicePcmStreamPlayerRef.current = player;
-      const { playback } = await player.enqueue({
-        backend: audio.backend,
-        body: audio.body,
-        sampleRate: audio.sampleRate,
-        signal: controller.signal,
-        shouldContinue: () =>
-          voiceEpochRef.current === voiceEpoch &&
-          voiceRouteThreadKeyRef.current === pendingVoiceTurn.routeThreadKey,
+      const { playback } = await queueVoiceSpeechChunk({
+        offsets: pendingVoiceTurn.spokenAssistantOffsets,
+        messageId: resolution.messageId,
+        nextOffset: nextSpokenOffset,
+        enqueue: () =>
+          player.enqueue({
+            backend: audio.backend,
+            body: audio.body,
+            sampleRate: audio.sampleRate,
+            signal: controller.signal,
+            shouldContinue: () =>
+              voiceEpochRef.current === voiceEpoch &&
+              voiceRouteThreadKeyRef.current === pendingVoiceTurn.routeThreadKey,
+          }),
       });
       voicePendingPlaybackCountRef.current += 1;
       const trackedPlayback = playback.finally(() => {

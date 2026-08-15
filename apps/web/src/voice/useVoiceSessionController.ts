@@ -35,7 +35,7 @@ export function shouldAutoStartVoiceCapture(mode: VoiceCaptureMode): boolean {
 export function shouldRecoverLocalVoiceGateway(input: {
   readonly pending: boolean;
   readonly httpBaseUrl: string | null;
-  readonly disabled?: boolean;
+  readonly disabled?: boolean | undefined;
   readonly captureMode: VoiceCaptureMode;
 }): boolean {
   return (
@@ -61,7 +61,7 @@ export function shouldIgnoreVoiceListenerState(
 }
 
 export function useVoiceSessionController(props: {
-  readonly disabled?: boolean;
+  readonly disabled: boolean | undefined;
   readonly fetchImplementation: VoiceFetch;
   readonly httpBaseUrl: string | null;
   readonly onCaptureCancelled: () => void | Promise<void>;

@@ -1,3 +1,4 @@
+import { MessageId } from "@t3tools/contracts";
 import { Children, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -89,9 +90,17 @@ describe("VoiceChatPage", () => {
     "%s stops capture and requests text return",
     (label) => {
       harness.micOff.mockClear();
-      const messages = [{ id: "message-1", role: "user", text: "Keep this history" }] as Parameters<
-        typeof VoiceChatPage
-      >[0]["messages"];
+      const messages: Parameters<typeof VoiceChatPage>[0]["messages"] = [
+        {
+          id: MessageId.make("message-1"),
+          role: "user",
+          text: "Keep this history",
+          turnId: null,
+          createdAt: "2026-08-14T00:00:00.000Z",
+          updatedAt: "2026-08-14T00:00:00.000Z",
+          streaming: false,
+        },
+      ];
       const onReturnToText = vi.fn();
       const tree = renderVoicePage({ messages, onReturnToText });
       const control = findByLabel(tree, label);

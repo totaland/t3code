@@ -1,21 +1,28 @@
-import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelSelection,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
 import { refreshVoiceSendContext, resolveVoiceSendContext } from "./voiceSendContext";
 
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 const selection = {
-  instanceId: "codex",
+  instanceId: CODEX_INSTANCE_ID,
   model: "gpt-5",
 } as ModelSelection;
 
 function provider(overrides: Partial<ServerProvider> = {}): ServerProvider {
   return {
-    instanceId: "codex",
-    driver: "codex",
+    instanceId: CODEX_INSTANCE_ID,
+    driver: CODEX_DRIVER,
     enabled: true,
     availability: "available",
-    models: [{ slug: "gpt-5", name: "GPT-5", capabilities: {} }],
+    models: [{ slug: "gpt-5", name: "GPT-5", capabilities: {}, isCustom: false }],
     ...overrides,
   } as ServerProvider;
 }
@@ -28,7 +35,7 @@ function resolve(
     modelSelection,
     preferredInstanceIds: [modelSelection?.instanceId],
     providers,
-    selectedProvider: "codex",
+    selectedProvider: CODEX_DRIVER,
     settings: DEFAULT_UNIFIED_SETTINGS,
   });
 }
@@ -50,8 +57,16 @@ describe("voice send context", () => {
 
   it("falls back from an unavailable saved instance to an enabled provider default", () => {
     const fallback = provider({
-      instanceId: "codex-work",
-      models: [{ slug: "gpt-5.1", name: "GPT-5.1", capabilities: {}, isDefault: true }],
+      instanceId: ProviderInstanceId.make("codex-work"),
+      models: [
+        {
+          slug: "gpt-5.1",
+          name: "GPT-5.1",
+          capabilities: {},
+          isCustom: false,
+          isDefault: true,
+        },
+      ],
     });
     const context = resolve(selection, [provider({ availability: "unavailable" }), fallback]);
 

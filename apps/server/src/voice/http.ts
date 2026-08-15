@@ -35,7 +35,7 @@ type VoiceSynthesisInput = {
   readonly backend: string;
 };
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
-const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 type ModelGatewayConfig = {
   readonly baseUrl: URL;
@@ -108,7 +108,7 @@ export async function requestTranscription(
         "x-tts-backend": replyBackend,
       },
       body: wav,
-      signal,
+      signal: signal ?? null,
     },
     fetchImplementation,
   );
@@ -143,7 +143,7 @@ async function requestSynthesis(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: encodeUnknownJson(input),
-    signal,
+    signal: signal ?? null,
   });
 }
 

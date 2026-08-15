@@ -28,6 +28,7 @@ import {
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  queueVoiceSpeechChunk,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
@@ -104,6 +105,39 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("queueVoiceSpeechChunk", () => {
+  it("commits the offset after playback is queued", async () => {
+    const offsets = new Map<string, number>();
+    const queued = { playback: Promise.resolve() };
+
+    await expect(
+      queueVoiceSpeechChunk({
+        offsets,
+        messageId: "message-1",
+        nextOffset: 42,
+        enqueue: async () => queued,
+      }),
+    ).resolves.toBe(queued);
+    expect(offsets.get("message-1")).toBe(42);
+  });
+
+  it("preserves the offset when playback queueing fails", async () => {
+    const offsets = new Map([["message-1", 12]]);
+
+    await expect(
+      queueVoiceSpeechChunk({
+        offsets,
+        messageId: "message-1",
+        nextOffset: 42,
+        enqueue: async () => {
+          throw new Error("queue failed");
+        },
+      }),
+    ).rejects.toThrow("queue failed");
+    expect(offsets.get("message-1")).toBe(12);
+  });
+});
 
 const completedTurn = {
   turnId: TurnId.make("turn-1"),

@@ -577,3 +577,14 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
 }
+
+export async function queueVoiceSpeechChunk<T>(input: {
+  readonly offsets: Map<string, number>;
+  readonly messageId: string;
+  readonly nextOffset: number;
+  readonly enqueue: () => Promise<T>;
+}): Promise<T> {
+  const queued = await input.enqueue();
+  input.offsets.set(input.messageId, input.nextOffset);
+  return queued;
+}

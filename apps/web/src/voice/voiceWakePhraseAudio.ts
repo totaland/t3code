@@ -11,6 +11,7 @@ type AudioContextConstructor = new () => AudioContext;
 
 type LocalAudioWakePhraseListenerInput = {
   readonly onCommand: (transcript: string) => void | Promise<void>;
+  readonly onNoCommand?: () => void;
   readonly onTranscribe: (wav: Blob, signal: AbortSignal) => Promise<string>;
   readonly onSleep?: () => void;
   readonly onSpeechStart?: () => boolean | void;

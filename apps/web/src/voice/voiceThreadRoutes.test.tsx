@@ -5,7 +5,7 @@ import {
   RouterContextProvider,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { createElement, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -449,7 +449,9 @@ function createHarness(history: RouterHistory) {
       const matchId = router.state.matches.at(-1)?.id;
       return matchId
         ? renderToStaticMarkup(
-            createElement(RouterContextProvider, { router }, createElement(Match, { matchId })),
+            <RouterContextProvider router={router}>
+              <Match matchId={matchId} />
+            </RouterContextProvider>,
           )
         : "";
     },
