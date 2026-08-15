@@ -4,6 +4,7 @@ import {
   endVoiceTurnRouteHold,
   isVoiceTurnRouteHeld,
   subscribeVoiceTurnRouteHolds,
+  transitionVoiceTurnRouteHold,
 } from "./voiceTurnRouteHold";
 
 it("holds a promoted draft route until its voice turn ends", () => {
@@ -25,4 +26,20 @@ it("holds a promoted draft route until its voice turn ends", () => {
   expect(listener).toHaveBeenCalledTimes(2);
 
   unsubscribe();
+});
+
+it("releases the previous route hold before adopting a new thread", () => {
+  const previousThreadKey = "environment:previous-thread";
+  const nextThreadKey = "environment:next-thread";
+  beginVoiceTurnRouteHold(previousThreadKey);
+  beginVoiceTurnRouteHold(nextThreadKey);
+
+  expect(transitionVoiceTurnRouteHold(previousThreadKey, nextThreadKey)).toBe(nextThreadKey);
+  expect(isVoiceTurnRouteHeld(previousThreadKey)).toBe(false);
+  expect(isVoiceTurnRouteHeld(nextThreadKey)).toBe(true);
+
+  expect(transitionVoiceTurnRouteHold(nextThreadKey, nextThreadKey)).toBe(nextThreadKey);
+  expect(isVoiceTurnRouteHeld(nextThreadKey)).toBe(true);
+
+  endVoiceTurnRouteHold(nextThreadKey);
 });

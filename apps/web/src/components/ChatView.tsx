@@ -259,7 +259,11 @@ import {
   synthesizeVoiceReplyStream,
   transcribeVoiceWav,
 } from "../voice/voiceClient";
-import { beginVoiceTurnRouteHold, endVoiceTurnRouteHold } from "../voice/voiceTurnRouteHold";
+import {
+  beginVoiceTurnRouteHold,
+  endVoiceTurnRouteHold,
+  transitionVoiceTurnRouteHold,
+} from "../voice/voiceTurnRouteHold";
 import { createVoiceEnvironmentFetch } from "../voice/voiceEnvironmentFetch";
 import { refreshVoiceSendContext, resolveVoiceSendContext } from "../voice/voiceSendContext";
 import { voiceRouteSession } from "../voice/voiceRouteSession";
@@ -5714,8 +5718,11 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     if (voiceRouteThreadKeyRef.current === routeThreadKey) return;
-    voiceRouteThreadKeyRef.current = routeThreadKey;
-    cancelVoiceTurn();
+    voiceRouteThreadKeyRef.current = transitionVoiceTurnRouteHold(
+      voiceRouteThreadKeyRef.current,
+      routeThreadKey,
+    );
+    cancelVoiceTurn({ preserveRouteHold: true });
   }, [cancelVoiceTurn, routeThreadKey]);
 
   useEffect(

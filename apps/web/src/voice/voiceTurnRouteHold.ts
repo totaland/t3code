@@ -16,6 +16,16 @@ export function endVoiceTurnRouteHold(threadKey: string): void {
   emitChange();
 }
 
+export function transitionVoiceTurnRouteHold(
+  previousThreadKey: string,
+  nextThreadKey: string,
+): string {
+  if (previousThreadKey !== nextThreadKey) {
+    endVoiceTurnRouteHold(previousThreadKey);
+  }
+  return nextThreadKey;
+}
+
 export function isVoiceTurnRouteHeld(threadKey: string | null): boolean {
   return threadKey !== null && heldThreadKeys.has(threadKey);
 }
