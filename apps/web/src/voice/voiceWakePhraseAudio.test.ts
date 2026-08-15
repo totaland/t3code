@@ -232,6 +232,64 @@ describe("local audio wake phrase", () => {
     }
   });
 
+  it("does not combine separated noises within one probe capture", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const onTranscribe = vi.fn(async () => "Hey Mai");
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe,
+      onCommand: vi.fn(),
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+    emitAudioSamples(new Float32Array(1_024).fill(0.007));
+    emitAudioSamples(new Float32Array(1_024));
+    emitAudioSamples(new Float32Array(1_024).fill(0.007));
+    scheduled.shift()?.();
+
+    expect(onTranscribe).not.toHaveBeenCalled();
+  });
+
+  it("submits one wake-plus-command utterance once", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const onCommand = vi.fn();
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe: vi.fn(async () => "Hey Mai open the current thread"),
+      onCommand,
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+    emitAudio(0.007);
+    emitAudio(0);
+    emitAudio(0);
+    emitAudio(0);
+    scheduled.shift()?.();
+
+    await vi.waitFor(() => expect(onCommand).toHaveBeenCalledWith("open the current thread"));
+    expect(onCommand).toHaveBeenCalledOnce();
+  });
+
   it("does not retranscribe a completed non-wake probe", async () => {
     FakeAudioContext.rejectResume = false;
     const scheduled: Array<() => void> = [];

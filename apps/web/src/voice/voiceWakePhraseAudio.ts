@@ -46,6 +46,7 @@ type LocalAudioSession = {
   transcribing: boolean;
   transcriptionAbortController: AbortController | null;
   voicedFrames: number;
+  voicedRunFrames: number;
 };
 
 const PROBE_INTERVAL_MS = 2_500;
@@ -105,6 +106,7 @@ export function createLocalAudioWakePhraseListener(
     target.silenceFrames = 0;
     target.speechStarted = false;
     target.voicedFrames = 0;
+    target.voicedRunFrames = 0;
   };
 
   const resetAudio = (target: LocalAudioSession) => {
@@ -284,6 +286,7 @@ export function createLocalAudioWakePhraseListener(
     }
 
     const wav = encodePcm16Wav(target.chunks, target.sampleRate);
+    const probedSilenceFrames = target.silenceFrames;
     resetCaptureEvidence(target);
     target.transcribing = true;
     const captureGeneration = target.captureGeneration;
@@ -317,10 +320,12 @@ export function createLocalAudioWakePhraseListener(
     const command = stripVoiceWakePhrase(transcript);
     input.onTranscript?.(command);
     const heardMoreAudio = target.audibleGeneration !== probedAudibleGeneration;
+    const probedSilenceReached =
+      probedSilenceFrames >= Math.round((target.sampleRate * COMMAND_SILENCE_MS) / 1_000);
     const silenceReached =
       target.silenceFrames >= Math.round((target.sampleRate * COMMAND_SILENCE_MS) / 1_000);
 
-    if (command.length > 0 && silenceReached && !heardMoreAudio) {
+    if (command.length > 0 && probedSilenceReached && !heardMoreAudio) {
       acceptTranscript(target, transcript, captureGeneration);
       return;
     }
@@ -379,6 +384,7 @@ export function createLocalAudioWakePhraseListener(
         transcribing: false,
         transcriptionAbortController: null,
         voicedFrames: 0,
+        voicedRunFrames: 0,
         audibleGeneration: 0,
         captureGeneration: 0,
         completedCaptureGeneration: -1,
@@ -396,7 +402,8 @@ export function createLocalAudioWakePhraseListener(
         target.frameCount += chunk.length;
         target.maxRms = Math.max(target.maxRms, chunkRms);
         if (chunkRms >= MIN_VOICE_RMS) {
-          target.voicedFrames += chunk.length;
+          target.voicedRunFrames += chunk.length;
+          target.voicedFrames = Math.max(target.voicedFrames, target.voicedRunFrames);
           const discardTriggerChunk =
             awake && !target.speechStarted && input.onSpeechStart?.() === true;
           if (discardTriggerChunk) {
@@ -409,8 +416,9 @@ export function createLocalAudioWakePhraseListener(
           target.audibleGeneration += 1;
           target.speechStarted = true;
           target.silenceFrames = 0;
-        } else if (target.speechStarted) {
-          target.silenceFrames += chunk.length;
+        } else {
+          target.voicedRunFrames = 0;
+          if (target.speechStarted) target.silenceFrames += chunk.length;
         }
 
         const windowMs = awake ? COMMAND_AUDIO_WINDOW_MS : WAKE_AUDIO_WINDOW_MS;
