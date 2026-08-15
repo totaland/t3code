@@ -175,6 +175,11 @@ vi.mock("../voice/useVoiceSessionController", () => ({
   }),
 }));
 
+vi.mock("../components/ComposerPromptEditor", () => ({
+  ComposerPromptEditor: (props: { readonly value: string }) => (
+    <div data-testid="composer-editor">{props.value}</div>
+  ),
+}));
 vi.mock("../composerDraftStore", async () => {
   const actual =
     await vi.importActual<typeof import("../composerDraftStore")>("../composerDraftStore");
