@@ -36,6 +36,8 @@ type LocalAudioSession = {
   readonly chunks: Float32Array[];
   readonly resumeOnInteraction: () => void;
   audibleGeneration: number;
+  captureGeneration: number;
+  completedCaptureGeneration: number;
   frameCount: number;
   maxRms: number;
   probeTimer: unknown | null;
@@ -43,13 +45,15 @@ type LocalAudioSession = {
   speechStarted: boolean;
   transcribing: boolean;
   transcriptionAbortController: AbortController | null;
+  voicedFrames: number;
 };
 
 const PROBE_INTERVAL_MS = 2_500;
 const WAKE_AUDIO_WINDOW_MS = 5_000;
 const COMMAND_AUDIO_WINDOW_MS = 30_000;
 const COMMAND_SILENCE_MS = 650;
-const MIN_AUDIBLE_RMS = 0.006;
+const MIN_VOICE_RMS = 0.012;
+const MIN_VOICED_AUDIO_MS = 120;
 
 function defaultAudioContextConstructor(): AudioContextConstructor | null {
   return typeof AudioContext === "undefined" ? null : AudioContext;
@@ -98,12 +102,18 @@ export function createLocalAudioWakePhraseListener(
     target.transcriptionAbortController = null;
     target.chunks.length = 0;
     target.frameCount = 0;
+    target.captureGeneration += 1;
     target.maxRms = 0;
     target.silenceFrames = 0;
     target.speechStarted = false;
+    target.voicedFrames = 0;
     target.transcribing = false;
   };
 
+  const hasVoiceEvidence = (target: LocalAudioSession) =>
+    target.chunks.length > 0 &&
+    target.maxRms >= MIN_VOICE_RMS &&
+    target.voicedFrames >= Math.round((target.sampleRate * MIN_VOICED_AUDIO_MS) / 1_000);
   const resumeAudio = async (target: LocalAudioSession) => {
     try {
       await target.context.resume();
@@ -181,7 +191,17 @@ export function createLocalAudioWakePhraseListener(
     if (enabled && !paused) emitState("listening");
   };
 
-  const acceptTranscript = (target: LocalAudioSession, transcript: string) => {
+  const acceptTranscript = (
+    target: LocalAudioSession,
+    transcript: string,
+    captureGeneration: number,
+  ) => {
+    if (
+      target.captureGeneration !== captureGeneration ||
+      target.completedCaptureGeneration === captureGeneration
+    ) {
+      return;
+    }
     target.transcribing = false;
     const command = containsVoiceWakePhrase(transcript)
       ? stripVoiceWakePhrase(transcript)
@@ -199,6 +219,7 @@ export function createLocalAudioWakePhraseListener(
       return;
     }
 
+    target.completedCaptureGeneration = captureGeneration;
     paused = true;
     input.onTranscript?.("");
     if (target.probeTimer !== null) cancelScheduled(target.probeTimer);
@@ -219,8 +240,15 @@ export function createLocalAudioWakePhraseListener(
 
   const finalizeCommand = async (target: LocalAudioSession) => {
     if (session !== target || !enabled || paused || !awake || target.transcribing) return;
-    if (!target.speechStarted || target.chunks.length === 0) return;
+    if (!hasVoiceEvidence(target)) {
+      resetAudio(target);
+      input.onTranscript?.("");
+      input.onNoCommand?.();
+      emitState("awake");
+      return;
+    }
     target.transcribing = true;
+    const captureGeneration = target.captureGeneration;
     const controller = new AbortController();
     target.transcriptionAbortController = controller;
 
@@ -232,7 +260,7 @@ export function createLocalAudioWakePhraseListener(
       );
       if (session !== target || !enabled || paused || !awake || controller.signal.aborted) return;
       target.transcriptionAbortController = null;
-      acceptTranscript(target, transcript);
+      acceptTranscript(target, transcript, captureGeneration);
     } catch (error) {
       if (session !== target || !enabled || paused || !awake || controller.signal.aborted) return;
       target.transcriptionAbortController = null;
@@ -243,7 +271,7 @@ export function createLocalAudioWakePhraseListener(
 
   const probe = async (target: LocalAudioSession) => {
     if (session !== target || !enabled || paused || awake || target.transcribing) return;
-    const shouldProbe = target.chunks.length > 0 && target.maxRms >= MIN_AUDIBLE_RMS;
+    const shouldProbe = hasVoiceEvidence(target);
     target.maxRms = 0;
     if (!shouldProbe) {
       scheduleProbe(target);
@@ -251,6 +279,7 @@ export function createLocalAudioWakePhraseListener(
     }
 
     target.transcribing = true;
+    const captureGeneration = target.captureGeneration;
     const controller = new AbortController();
     target.transcriptionAbortController = controller;
     const probedAudibleGeneration = target.audibleGeneration;
@@ -286,7 +315,7 @@ export function createLocalAudioWakePhraseListener(
       target.silenceFrames >= Math.round((target.sampleRate * COMMAND_SILENCE_MS) / 1_000);
 
     if (command.length > 0 && silenceReached && !heardMoreAudio) {
-      acceptTranscript(target, transcript);
+      acceptTranscript(target, transcript, captureGeneration);
       return;
     }
     if (command.length === 0 && !heardMoreAudio) {
@@ -343,7 +372,10 @@ export function createLocalAudioWakePhraseListener(
         speechStarted: false,
         transcribing: false,
         transcriptionAbortController: null,
+        voicedFrames: 0,
         audibleGeneration: 0,
+        captureGeneration: 0,
+        completedCaptureGeneration: -1,
         resumeOnInteraction: () => void resumeAudio(target),
       };
       silentOutput.gain.value = 0;
@@ -357,7 +389,8 @@ export function createLocalAudioWakePhraseListener(
         target.chunks.push(chunk);
         target.frameCount += chunk.length;
         target.maxRms = Math.max(target.maxRms, chunkRms);
-        if (chunkRms >= MIN_AUDIBLE_RMS) {
+        if (chunkRms >= MIN_VOICE_RMS) {
+          target.voicedFrames += chunk.length;
           const discardTriggerChunk =
             awake && !target.speechStarted && input.onSpeechStart?.() === true;
           if (discardTriggerChunk) {

@@ -5,6 +5,11 @@ current environment and thread. The button primes browser audio during the click
 it does not capture audio while the text-chat page remains visible. Say “Hey Mai” once to wake the
 conversation, then speak commands naturally. Pause briefly to send each command.
 
+Local capture requires sustained voiced audio before it asks the transcription gateway to decode a
+segment. Silence, near-silence, and duplicate completion events are discarded, so they cannot create
+messages or restart a transcription loop. Spoken phrases such as “thank you” and “amen” remain valid;
+T3 uses audio evidence rather than a phrase blacklist.
+
 The waveform stays listening while Mai works and speaks. To change direction, start speaking again:
 Mai’s current audio and provider turn stop immediately, then your new command is captured and sent
 after you pause.
