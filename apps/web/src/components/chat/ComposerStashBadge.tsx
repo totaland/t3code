@@ -5,8 +5,7 @@ import { cn } from "~/lib/utils";
 
 /**
  * Bookmark pill perched on the composer's top-right shoulder. Shows the
- * current method's stash count and doubles as the click target for opening
- * the stash menu.
+ * stash count and doubles as the click target for opening the stash menu.
  *
  * On save the badge gives one quiet acknowledgement: it lifts to full
  * opacity and the count ticks over. `pulseKey` changes per stash, remounting
@@ -47,7 +46,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         className={cn(
           "rounded-full px-1.5 text-[10px] font-medium tabular-nums",
           props.pulsing
-            ? "prompt-stash-count-enter bg-primary text-primary-foreground"
+            ? "animate-[prompt-stash-count-enter_180ms_ease-out_both] bg-primary text-primary-foreground motion-reduce:animate-none"
             : "bg-muted text-muted-foreground",
         )}
       >

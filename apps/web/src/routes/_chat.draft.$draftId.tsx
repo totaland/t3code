@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import {
@@ -10,6 +10,8 @@ import {
 import { SidebarInset } from "../components/ui/sidebar";
 import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { isVoiceTurnRouteHeld, subscribeVoiceTurnRouteHolds } from "../voice/voiceTurnRouteHold";
 import { useThread, useThreadRefs } from "../state/entities";
 
 function DraftChatThreadRouteView() {
@@ -29,6 +31,12 @@ function DraftChatThreadRouteView() {
   const serverThread = useThread(serverThreadRef);
   const serverThreadStarted = threadHasStarted(serverThread);
   const canonicalThreadRef = serverThreadStarted ? serverThreadRef : null;
+  const canonicalThreadKey = canonicalThreadRef ? scopedThreadKey(canonicalThreadRef) : null;
+  const voiceTurnRouteHeld = useSyncExternalStore(
+    subscribeVoiceTurnRouteHolds,
+    () => isVoiceTurnRouteHeld(canonicalThreadKey),
+    () => false,
+  );
 
   useEffect(() => {
     if (!inferredThreadRef || draftSession?.promotedTo) {
@@ -38,7 +46,7 @@ function DraftChatThreadRouteView() {
   }, [draftSession?.promotedTo, inferredThreadRef]);
 
   useEffect(() => {
-    if (!canonicalThreadRef) {
+    if (!canonicalThreadRef || voiceTurnRouteHeld) {
       return;
     }
 
@@ -57,7 +65,7 @@ function DraftChatThreadRouteView() {
     return () => {
       cancelled = true;
     };
-  }, [canonicalThreadRef, navigate]);
+  }, [canonicalThreadRef, navigate, voiceTurnRouteHeld]);
 
   useEffect(() => {
     if (draftSession || canonicalThreadRef) {
