@@ -200,6 +200,38 @@ describe("local audio wake phrase", () => {
     expect(onCommand).not.toHaveBeenCalled();
   });
 
+  it("does not combine brief noises across probe captures", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const onTranscribe = vi.fn(async () => "Hey Mai");
+    const onWake = vi.fn();
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe,
+      onWake,
+      onCommand: vi.fn(),
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+
+    for (let capture = 0; capture < 2; capture += 1) {
+      emitAudioSamples(new Float32Array(1_024).fill(0.007));
+      scheduled.shift()?.();
+      expect(onTranscribe).not.toHaveBeenCalled();
+      expect(onWake).not.toHaveBeenCalled();
+      expect(scheduled).toHaveLength(1);
+    }
+  });
+
   it("submits one voiced utterance once and ignores repeated near-silent hallucinations", async () => {
     FakeAudioContext.rejectResume = false;
     const scheduled: Array<() => void> = [];

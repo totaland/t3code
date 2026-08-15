@@ -274,6 +274,7 @@ export function createLocalAudioWakePhraseListener(
     const shouldProbe = hasVoiceEvidence(target);
     target.maxRms = 0;
     if (!shouldProbe) {
+      resetAudio(target);
       scheduleProbe(target);
       return;
     }
