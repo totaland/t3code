@@ -174,7 +174,7 @@ vi.mock("../composerDraftStore", async () => {
   const actual =
     await vi.importActual<typeof import("../composerDraftStore")>("../composerDraftStore");
   const draft = {
-    prompt: "",
+    prompt: "Unsent draft",
     images: [],
     terminalContexts: [],
     elementContexts: [],

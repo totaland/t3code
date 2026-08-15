@@ -3197,8 +3197,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     pendingUserInputs.length > 0 ||
                     projectSelectionRequired ||
                     environmentUnavailable !== null ||
-                    noProviderAvailable ||
-                    prompt.trim().length > 0
+                    noProviderAvailable
                   }
                   onEnterVoice={onOpenVoice}
                   onPlaybackUnlock={onVoicePlaybackUnlock}
