@@ -122,11 +122,16 @@ vi.mock("../components/ui/button", async () => {
       readonly "aria-label"?: string;
       readonly children?: ReactNode;
       readonly onClick?: () => void;
+      readonly disabled?: boolean;
     }) => {
-      if (props["aria-label"] && props.onClick) {
+      if (props["aria-label"] && props.onClick && !props.disabled) {
         harness.controls.set(props["aria-label"], props.onClick);
       }
-      return React.createElement("button", { "aria-label": props["aria-label"] }, props.children);
+      return React.createElement(
+        "button",
+        { "aria-label": props["aria-label"], disabled: props.disabled },
+        props.children,
+      );
     },
   };
 });
@@ -469,6 +474,7 @@ function expectConversation(html: string, surface: "text" | "voice") {
     expect(html).toContain("Keep this history");
     expect(html).toContain("History retained");
     expect(html).toContain('aria-label="Open voice conversation"');
+    expect(html).toContain("Unsent draft");
   }
 }
 
@@ -488,6 +494,7 @@ async function openVoice(
     environmentId: "env-one",
     threadId: "thread-two",
   });
+  expect(harness.controls.has("Open voice conversation")).toBe(true);
   harness.controls.get("Open voice conversation")?.();
   await vi.waitFor(() => {
     expect(app.router.state.location.pathname).toBe("/voice/env-one/thread-two");
