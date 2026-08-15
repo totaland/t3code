@@ -18,7 +18,8 @@ Press Escape, say “go to sleep”, or choose **Sleep** to return to wake-phras
 keeps microphone access active so Mai can hear the wake phrase. **Mic off** is different: it stops
 microphone capture and releases the active browser media stream. **End** and **Return to text** stop
 voice resources and return to the same text thread, where voice prompts and replies remain in normal
-message history.
+message history. An unsent composer draft does not block voice entry and remains unchanged when you
+return to text.
 
 The configured local model-gateway transcription and speech services are the default privacy
 boundary. If local transcription is unavailable but browser speech recognition exists, T3 explains
