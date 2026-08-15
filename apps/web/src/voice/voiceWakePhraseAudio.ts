@@ -302,6 +302,7 @@ export function createLocalAudioWakePhraseListener(
     target.transcriptionAbortController = null;
     target.transcribing = false;
     if (!containsVoiceWakePhrase(transcript)) {
+      resetAudio(target);
       scheduleProbe(target);
       return;
     }
