@@ -260,6 +260,33 @@ describe("local audio wake phrase", () => {
     expect(onTranscribe).not.toHaveBeenCalled();
   });
 
+  it("expires voice evidence with the retained wake window", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const onTranscribe = vi.fn(async () => "Hey Mai");
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe,
+      onCommand: vi.fn(),
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+    emitAudio(0.007);
+    for (let chunk = 0; chunk < 20; chunk += 1) emitAudio(0);
+    scheduled.shift()?.();
+
+    expect(onTranscribe).not.toHaveBeenCalled();
+  });
+
   it("submits one wake-plus-command utterance once", async () => {
     FakeAudioContext.rejectResume = false;
     const scheduled: Array<() => void> = [];

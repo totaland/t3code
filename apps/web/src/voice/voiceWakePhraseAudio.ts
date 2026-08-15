@@ -33,6 +33,7 @@ type LocalAudioSession = {
   readonly processor: ScriptProcessorNode;
   readonly silentOutput: GainNode;
   readonly sampleRate: number;
+  readonly chunkRms: number[];
   readonly chunks: Float32Array[];
   readonly resumeOnInteraction: () => void;
   audibleGeneration: number;
@@ -99,6 +100,7 @@ export function createLocalAudioWakePhraseListener(
   };
 
   const resetCaptureEvidence = (target: LocalAudioSession) => {
+    target.chunkRms.length = 0;
     target.chunks.length = 0;
     target.frameCount = 0;
     target.captureGeneration += 1;
@@ -107,6 +109,28 @@ export function createLocalAudioWakePhraseListener(
     target.speechStarted = false;
     target.voicedFrames = 0;
     target.voicedRunFrames = 0;
+  };
+
+  const recomputeCaptureEvidence = (target: LocalAudioSession) => {
+    target.maxRms = 0;
+    target.silenceFrames = 0;
+    target.speechStarted = false;
+    target.voicedFrames = 0;
+    target.voicedRunFrames = 0;
+    for (let index = 0; index < target.chunks.length; index += 1) {
+      const chunk = target.chunks[index]!;
+      const chunkRms = target.chunkRms[index]!;
+      target.maxRms = Math.max(target.maxRms, chunkRms);
+      if (chunkRms >= MIN_VOICE_RMS) {
+        target.voicedRunFrames += chunk.length;
+        target.voicedFrames = Math.max(target.voicedFrames, target.voicedRunFrames);
+        target.speechStarted = true;
+        target.silenceFrames = 0;
+      } else {
+        target.voicedRunFrames = 0;
+        if (target.speechStarted) target.silenceFrames += chunk.length;
+      }
+    }
   };
 
   const resetAudio = (target: LocalAudioSession) => {
@@ -375,6 +399,7 @@ export function createLocalAudioWakePhraseListener(
         processor,
         silentOutput,
         sampleRate: context.sampleRate,
+        chunkRms: [],
         chunks: [],
         frameCount: 0,
         maxRms: 0,
@@ -398,6 +423,7 @@ export function createLocalAudioWakePhraseListener(
         for (const sample of chunk) squaredAmplitude += sample * sample;
         const chunkRms = Math.sqrt(squaredAmplitude / chunk.length);
 
+        target.chunkRms.push(chunkRms);
         target.chunks.push(chunk);
         target.frameCount += chunk.length;
         target.maxRms = Math.max(target.maxRms, chunkRms);
@@ -423,9 +449,13 @@ export function createLocalAudioWakePhraseListener(
 
         const windowMs = awake ? COMMAND_AUDIO_WINDOW_MS : WAKE_AUDIO_WINDOW_MS;
         const maxFrames = Math.round((target.sampleRate * windowMs) / 1_000);
+        let trimmed = false;
         while (target.frameCount > maxFrames && target.chunks.length > 1) {
+          target.chunkRms.shift();
           target.frameCount -= target.chunks.shift()!.length;
+          trimmed = true;
         }
+        if (trimmed) recomputeCaptureEvidence(target);
 
         const silenceFrames = Math.round((target.sampleRate * COMMAND_SILENCE_MS) / 1_000);
         if (
