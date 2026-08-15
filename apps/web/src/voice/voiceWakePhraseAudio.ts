@@ -52,7 +52,7 @@ const PROBE_INTERVAL_MS = 2_500;
 const WAKE_AUDIO_WINDOW_MS = 5_000;
 const COMMAND_AUDIO_WINDOW_MS = 30_000;
 const COMMAND_SILENCE_MS = 650;
-const MIN_VOICE_RMS = 0.012;
+const MIN_VOICE_RMS = 0.006;
 const MIN_VOICED_AUDIO_MS = 120;
 
 function defaultAudioContextConstructor(): AudioContextConstructor | null {

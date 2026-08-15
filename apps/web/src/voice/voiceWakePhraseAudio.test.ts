@@ -236,7 +236,7 @@ describe("local audio wake phrase", () => {
     await vi.waitFor(() => expect(states.at(-1)).toBe("awake"));
 
     for (let segment = 0; segment < 3; segment += 1) {
-      emitAudio(0.007);
+      emitAudio(0.003);
       emitAudio(0);
       emitAudio(0);
       emitAudio(0);
@@ -273,7 +273,7 @@ describe("local audio wake phrase", () => {
     await vi.waitFor(() => expect(transcripts).toHaveLength(2));
 
     for (const expected of ["thank you", "amen"]) {
-      emitAudio(0.1);
+      emitAudio(0.007);
       emitAudio(0);
       emitAudio(0);
       emitAudio(0);
