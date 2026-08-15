@@ -97,9 +97,7 @@ export function createLocalAudioWakePhraseListener(
     input.onStateChange?.(next);
   };
 
-  const resetAudio = (target: LocalAudioSession) => {
-    target.transcriptionAbortController?.abort();
-    target.transcriptionAbortController = null;
+  const resetCaptureEvidence = (target: LocalAudioSession) => {
     target.chunks.length = 0;
     target.frameCount = 0;
     target.captureGeneration += 1;
@@ -107,6 +105,12 @@ export function createLocalAudioWakePhraseListener(
     target.silenceFrames = 0;
     target.speechStarted = false;
     target.voicedFrames = 0;
+  };
+
+  const resetAudio = (target: LocalAudioSession) => {
+    target.transcriptionAbortController?.abort();
+    target.transcriptionAbortController = null;
+    resetCaptureEvidence(target);
     target.transcribing = false;
   };
 
@@ -279,12 +283,13 @@ export function createLocalAudioWakePhraseListener(
       return;
     }
 
+    const wav = encodePcm16Wav(target.chunks, target.sampleRate);
+    resetCaptureEvidence(target);
     target.transcribing = true;
     const captureGeneration = target.captureGeneration;
     const controller = new AbortController();
     target.transcriptionAbortController = controller;
     const probedAudibleGeneration = target.audibleGeneration;
-    const wav = encodePcm16Wav(target.chunks, target.sampleRate);
     let transcript = "";
     try {
       transcript = await input.onTranscribe(
@@ -302,7 +307,6 @@ export function createLocalAudioWakePhraseListener(
     target.transcriptionAbortController = null;
     target.transcribing = false;
     if (!containsVoiceWakePhrase(transcript)) {
-      resetAudio(target);
       scheduleProbe(target);
       return;
     }
