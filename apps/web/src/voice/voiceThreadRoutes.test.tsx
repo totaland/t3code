@@ -50,6 +50,19 @@ const harness = vi.hoisted(() => {
     workspaceRoot: "/workspace",
     defaultModelSelection: { instanceId: "codex", model: "gpt-5", options: {} },
   };
+  const draftSession = {
+    threadId: "thread-two",
+    environmentId: "env-one",
+    projectId: "project-one",
+    logicalProjectKey: "project-one",
+    createdAt: "2026-08-14T00:00:00.000Z",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    envMode: "local",
+    startFromOrigin: false,
+  };
   const thread = {
     id: "thread-two",
     environmentId: "env-one",
@@ -85,10 +98,12 @@ const harness = vi.hoisted(() => {
   };
   return {
     controls: new Map<string, () => void>(),
+    draftSession,
     environment,
     messages,
     micOff: vi.fn(),
     project,
+    serverThreadAvailable: true,
     thread,
   };
 });
@@ -201,11 +216,11 @@ vi.mock("../composerDraftStore", async () => {
     {
       draftThreadsByThreadKey: {},
       getComposerDraft: () => draft,
-      getDraftSession: () => null,
-      getDraftSessionByRef: () => null,
-      getDraftThreadByRef: () => null,
+      getDraftSession: () => harness.draftSession,
+      getDraftSessionByRef: () => harness.draftSession,
+      getDraftThreadByRef: () => harness.draftSession,
       getDraftSessionByLogicalProjectKey: () => null,
-      hasDraftThreadsInEnvironment: () => false,
+      hasDraftThreadsInEnvironment: () => true,
     },
     {
       get(target, property) {
@@ -249,10 +264,10 @@ vi.mock("../state/entities", () => ({
   useProject: () => harness.project,
   useProjects: () => [harness.project],
   useServerConfigs: () => new Map([["env-one", harness.environment.serverConfig]]),
-  useThread: () => harness.thread,
-  useThreadDetail: () => harness.thread,
+  useThread: () => (harness.serverThreadAvailable ? harness.thread : null),
+  useThreadDetail: () => (harness.serverThreadAvailable ? harness.thread : null),
   useThreadRefs: () => [{ environmentId: "env-one", threadId: "thread-two" }],
-  useThreadShell: () => harness.thread,
+  useThreadShell: () => (harness.serverThreadAvailable ? harness.thread : null),
   useThreadStatus: () => "live",
 }));
 
@@ -521,6 +536,36 @@ async function openVoice(
 }
 
 describe("voice thread navigation", () => {
+  it("opens voice from a new draft before the first turn creates its server thread", async () => {
+    harness.serverThreadAvailable = false;
+    try {
+      harness.controls.clear();
+      const history = createMemoryHistory({
+        initialEntries: ["/draft/draft-one"],
+      });
+      const app = createHarness(history);
+      await loadForStaticRender(app);
+
+      expect(app.router.state.location.pathname).toBe("/draft/draft-one");
+      expect(app.render()).toContain('aria-label="Open voice conversation"');
+      expect(harness.controls.has("Open voice conversation")).toBe(true);
+
+      harness.controls.get("Open voice conversation")?.();
+      await vi.waitFor(() => {
+        expect(app.router.state.location.pathname).toBe("/voice/env-one/thread-two");
+      });
+      await loadForStaticRender(app);
+
+      expectConversation(app.render(), "voice");
+      expect(app.router.state.matches.at(-1)?.params).toMatchObject({
+        environmentId: "env-one",
+        threadId: "thread-two",
+      });
+    } finally {
+      harness.serverThreadAvailable = true;
+    }
+  });
+
   it.each(["Return to text conversation", "End voice and return to text conversation"] as const)(
     "%s preserves the routed thread and rendered history",
     async (controlLabel) => {

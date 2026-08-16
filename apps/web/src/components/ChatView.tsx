@@ -5537,7 +5537,13 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     const pendingVoiceTurn = pendingVoiceTurnRef.current;
-    if (voicePhase !== "waiting" || !pendingVoiceTurn || !activeThread || !environmentHttpBaseUrl) {
+    if (
+      voicePhase !== "waiting" ||
+      !pendingVoiceTurn ||
+      !activeThread ||
+      !environmentHttpBaseUrl ||
+      voiceRequestAbortRef.current
+    ) {
       return;
     }
     if (
@@ -5617,7 +5623,6 @@ function ChatViewContent(props: ChatViewProps) {
     const voiceEpoch = pendingVoiceTurn.epoch;
     const controller = new AbortController();
     voiceRequestAbortRef.current = controller;
-    setVoicePhase("speaking");
     let queuedForPlayback = false;
     void (async () => {
       const audio = await synthesizeVoiceReplyStream({
@@ -5656,6 +5661,7 @@ function ChatViewContent(props: ChatViewProps) {
           player.enqueue({
             backend: audio.backend,
             body: audio.body,
+            onPlaybackStart: () => setVoicePhase("speaking"),
             sampleRate: audio.sampleRate,
             signal: controller.signal,
             shouldContinue: () =>
@@ -6586,6 +6592,7 @@ function ChatViewContent(props: ChatViewProps) {
         }
         messages={activeThread.messages}
         phase={voicePhase}
+        playbackNeedsInteraction={voiceRouteSession.getPlayback()?.state !== "running"}
         projectTitle={activeProject?.title ?? null}
         threadTitle={activeThread.title}
         onCaptureCancelled={cancelVoiceTurn}

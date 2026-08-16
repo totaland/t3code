@@ -25,8 +25,30 @@ function triggerFor(props?: {
   return Children.toArray(tree.props.children)[0] as TriggerElement;
 }
 
+it("keeps the primed context retained until playback unlock settles", async () => {
+  let finishPlaybackUnlock!: () => void;
+  const onEnterVoice = vi.fn();
+  const trigger = triggerFor({
+    onEnterVoice,
+    onPlaybackUnlock: vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPlaybackUnlock = resolve;
+        }),
+    ),
+  });
+
+  trigger.props.render.props.onClick();
+
+  expect(onEnterVoice).not.toHaveBeenCalled();
+  finishPlaybackUnlock();
+  await Promise.resolve();
+
+  expect(onEnterVoice).toHaveBeenCalledOnce();
+});
+
 describe("ComposerVoiceWakePhraseButton", () => {
-  it("uses the waveform gesture to prime audio before navigating to the exact voice thread", () => {
+  it("uses the waveform gesture to prime audio before navigating to the exact voice thread", async () => {
     const order: string[] = [];
     const navigate = vi.fn();
     const trigger = triggerFor({
@@ -40,6 +62,7 @@ describe("ComposerVoiceWakePhraseButton", () => {
     });
 
     trigger.props.render.props.onClick();
+    await Promise.resolve();
 
     expect(order).toEqual(["prime", "navigate"]);
     expect(navigate).toHaveBeenCalledWith({
@@ -49,11 +72,12 @@ describe("ComposerVoiceWakePhraseButton", () => {
     expect(trigger.props.render.props["aria-label"]).toBe("Open voice conversation");
   });
 
-  it("does not start capture on the text-chat page", () => {
+  it("does not start capture on the text-chat page", async () => {
     const onEnterVoice = vi.fn();
     const trigger = triggerFor({ onEnterVoice });
 
     trigger.props.render.props.onClick();
+    await Promise.resolve();
 
     expect(onEnterVoice).toHaveBeenCalledOnce();
   });

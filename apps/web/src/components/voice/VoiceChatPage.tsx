@@ -24,6 +24,7 @@ export function VoiceChatPage(props: {
   readonly disabled?: boolean;
   readonly messages: readonly ChatMessage[];
   readonly phase: VoiceTurnPhase;
+  readonly playbackNeedsInteraction: boolean;
   readonly projectTitle: string | null;
   readonly threadTitle: string;
   readonly onCaptureCancelled: () => void;
@@ -116,12 +117,14 @@ export function VoiceChatPage(props: {
               {session.statusText}
             </p>
             <p className="min-h-10 text-muted-foreground text-sm">
-              {session.liveTranscript ||
-                (session.sleeping
-                  ? "Wake-word detection remains on. Conversation capture is paused."
-                  : session.enabled
-                    ? "Say “Hey Mai”, then speak naturally."
-                    : "Microphone capture is fully stopped.")}
+              {props.playbackNeedsInteraction
+                ? "Tap “Enable audio” once so you can hear Mai’s replies."
+                : session.liveTranscript ||
+                  (session.sleeping
+                    ? "Wake-word detection remains on. Conversation capture is paused."
+                    : session.enabled
+                      ? "Say “Hey Mai”, then speak naturally."
+                      : "Microphone capture is fully stopped.")}
             </p>
           </div>
 
@@ -154,8 +157,12 @@ export function VoiceChatPage(props: {
             </div>
           ) : null}
 
-          {session.listenerState === "needs-interaction" ? (
-            <Button variant="outline" onClick={session.unlock}>
+          {session.listenerState === "needs-interaction" || props.playbackNeedsInteraction ? (
+            <Button
+              variant="outline"
+              aria-label="Enable Mai audio playback"
+              onClick={session.unlock}
+            >
               Enable audio
             </Button>
           ) : null}

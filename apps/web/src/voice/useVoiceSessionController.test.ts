@@ -273,6 +273,32 @@ describe("useVoiceSessionController", () => {
     expect(shouldIgnoreVoiceListenerState(false, "off")).toBe(false);
   });
 
+  it("pauses capture while waiting so ambient audio cannot submit another turn", () => {
+    createController({ phase: "waiting" });
+    harness.effects[0]?.();
+    harness.effects[1]?.();
+
+    expect(harness.listener.pause).toHaveBeenCalledOnce();
+    expect(harness.listener.resume).not.toHaveBeenCalled();
+  });
+  it("guards Mai playback attack, then restores speaking-phase barge-in", () => {
+    vi.useFakeTimers();
+    try {
+      createController({ phase: "speaking" });
+      harness.effects[0]?.();
+      const cleanup = harness.effects[1]?.();
+
+      expect(harness.listener.pause).toHaveBeenCalledOnce();
+      expect(harness.listener.resume).not.toHaveBeenCalled();
+
+      vi.runAllTimers();
+
+      expect(harness.listener.resume).toHaveBeenCalledOnce();
+      cleanup?.();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("does not start capture while the route is disabled", () => {
     createController({ disabled: true });
 

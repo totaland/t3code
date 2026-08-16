@@ -50,11 +50,14 @@ type ActiveSource = {
 
 export class VoicePcmStreamPlayer {
   private readonly activeSources = new Set<ActiveSource>();
+  private readonly playbackStartTimers = new Set<ReturnType<typeof setTimeout>>();
   private scheduledUntil = 0;
 
   constructor(private readonly context: AudioContext) {}
 
   stop(): void {
+    for (const timer of this.playbackStartTimers) globalThis.clearTimeout(timer);
+    this.playbackStartTimers.clear();
     for (const active of this.activeSources) {
       try {
         active.source.stop();
@@ -71,6 +74,7 @@ export class VoicePcmStreamPlayer {
   async enqueue(input: {
     readonly backend: string;
     readonly body: ReadableStream<Uint8Array>;
+    readonly onPlaybackStart?: () => void;
     readonly sampleRate: number;
     readonly signal: AbortSignal;
     readonly shouldContinue: () => boolean;
@@ -111,6 +115,14 @@ export class VoicePcmStreamPlayer {
           { once: true },
         );
         source.start(startAt);
+        if (endings.length === 0 && input.onPlaybackStart) {
+          const delayMs = Math.max(0, (startAt - this.context.currentTime) * 1_000);
+          const timer = globalThis.setTimeout(() => {
+            this.playbackStartTimers.delete(timer);
+            if (!input.signal.aborted && input.shouldContinue()) input.onPlaybackStart?.();
+          }, delayMs);
+          this.playbackStartTimers.add(timer);
+        }
         endings.push(ended);
       }
       if (endings.length === 0) throw new Error("Local speech synthesis returned no audio.");

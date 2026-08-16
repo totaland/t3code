@@ -68,6 +68,46 @@ function defaultGetUserMedia():
   return navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
 }
 
+type ExtendedVoiceTrackCapabilities = {
+  readonly echoCancellation?: readonly (boolean | string)[];
+  readonly voiceIsolation?: readonly boolean[];
+};
+
+async function preferFullEchoCancellation(stream: MediaStream): Promise<void> {
+  if (typeof stream.getAudioTracks !== "function") return;
+  const track = stream.getAudioTracks()[0];
+  if (
+    !track ||
+    typeof track.getCapabilities !== "function" ||
+    typeof track.applyConstraints !== "function"
+  ) {
+    return;
+  }
+
+  const capabilities = track.getCapabilities() as unknown as ExtendedVoiceTrackCapabilities;
+  const constraints: {
+    echoCancellation?: "all";
+    voiceIsolation?: true;
+  } = {};
+
+  if (
+    Array.isArray(capabilities.echoCancellation) &&
+    capabilities.echoCancellation.includes("all")
+  ) {
+    constraints.echoCancellation = "all";
+  }
+  if (Array.isArray(capabilities.voiceIsolation) && capabilities.voiceIsolation.includes(true)) {
+    constraints.voiceIsolation = true;
+  }
+  if (Object.keys(constraints).length === 0) return;
+
+  try {
+    await track.applyConstraints(constraints as unknown as MediaTrackConstraints);
+  } catch {
+    // The initial getUserMedia request already enabled standard echo cancellation.
+  }
+}
+
 export function createLocalAudioWakePhraseListener(
   input: LocalAudioWakePhraseListenerInput,
 ): VoiceWakePhraseListener | null {
@@ -377,6 +417,7 @@ export function createLocalAudioWakePhraseListener(
           noiseSuppression: true,
         },
       });
+      await preferFullEchoCancellation(stream);
       try {
         await context.resume();
       } catch {

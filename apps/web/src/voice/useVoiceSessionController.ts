@@ -18,6 +18,7 @@ import { createLocalAudioWakePhraseListener } from "./voiceWakePhraseAudio";
 export type VoiceCaptureMode = "local-audio" | "browser-fallback" | "unsupported";
 export type VoiceTurnPhase = "idle" | "transcribing" | "waiting" | "speaking";
 
+const SPEAKING_ECHO_GUARD_MS = 400;
 export function resolveVoiceCaptureMode(
   detectedMode: "local-audio" | "speech-recognition" | "unsupported",
 ): VoiceCaptureMode {
@@ -274,13 +275,22 @@ export function useVoiceSessionController(props: {
   useEffect(() => {
     const listener = listenerRef.current;
     if (!listener) return;
-    if (props.disabled) {
-      invalidateSession();
+    const turnOwnsCapture = props.phase === "transcribing" || props.phase === "waiting";
+    if (props.disabled || turnOwnsCapture) {
+      if (props.disabled) invalidateSession();
       listener.pause();
-    } else {
-      listener.resume();
+      return;
     }
-  }, [props.disabled]);
+    if (props.phase === "speaking") {
+      listener.pause();
+      const guardTimer = globalThis.setTimeout(() => {
+        if (propsRef.current.disabled || propsRef.current.phase !== "speaking") return;
+        listener.resume();
+      }, SPEAKING_ECHO_GUARD_MS);
+      return () => globalThis.clearTimeout(guardTimer);
+    }
+    listener.resume();
+  }, [props.disabled, props.phase]);
 
   useEffect(() => {
     if (!enabled) return;

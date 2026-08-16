@@ -22,15 +22,21 @@ export function ComposerVoiceWakePhraseButton(props: {
             disabled={props.disabled}
             aria-label={label}
             onClick={() => {
-              void props.onPlaybackUnlock().catch((error: unknown) => {
-                toastManager.add({
-                  type: "error",
-                  title: "Audio playback unavailable",
-                  description:
-                    error instanceof Error ? error.message : "The browser blocked audio playback.",
-                });
-              });
-              props.onEnterVoice();
+              void (async () => {
+                try {
+                  await props.onPlaybackUnlock();
+                } catch (error: unknown) {
+                  toastManager.add({
+                    type: "error",
+                    title: "Audio playback unavailable",
+                    description:
+                      error instanceof Error
+                        ? error.message
+                        : "The browser blocked audio playback.",
+                  });
+                }
+                props.onEnterVoice();
+              })();
             }}
           />
         }

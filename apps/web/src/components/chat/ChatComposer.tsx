@@ -3191,7 +3191,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerVoiceEnginePicker />
                 <ComposerVoiceWakePhraseButton
                   disabled={
-                    routeKind !== "server" ||
                     isConnecting ||
                     isComposerApprovalState ||
                     pendingUserInputs.length > 0 ||

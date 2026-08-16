@@ -57,8 +57,21 @@ describe("local audio wake phrase", () => {
     const transcripts = ["Hey Mai", "open the current thread", "summarize it"];
     const onTranscribe = vi.fn(async () => transcripts.shift() ?? "");
     const stop = vi.fn();
+    const applyConstraints = vi.fn(async () => undefined);
     const getUserMedia = vi.fn(
-      async () => ({ getTracks: () => [{ stop }] }) as unknown as MediaStream,
+      async () =>
+        ({
+          getTracks: () => [{ stop }],
+          getAudioTracks: () => [
+            {
+              applyConstraints,
+              getCapabilities: () => ({
+                echoCancellation: [true, "all"],
+                voiceIsolation: [false, true],
+              }),
+            },
+          ],
+        }) as unknown as MediaStream,
     );
     const listener = createLocalAudioWakePhraseListener({
       audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
@@ -77,6 +90,10 @@ describe("local audio wake phrase", () => {
 
     listener?.start();
     await vi.waitFor(() => expect(states).toEqual(["starting", "listening"]));
+    expect(applyConstraints).toHaveBeenCalledWith({
+      echoCancellation: "all",
+      voiceIsolation: true,
+    });
     emitAudio(0.1);
     scheduled.shift()?.();
 

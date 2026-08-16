@@ -1,6 +1,6 @@
 import { MessageId } from "@t3tools/contracts";
 import { Children, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({
   focus: vi.fn(),
@@ -69,11 +69,27 @@ function renderVoicePage(overrides: Partial<Parameters<typeof VoiceChatPage>[0]>
     onReturnToText: vi.fn(),
     onTranscript: vi.fn(),
     phase: "idle",
+    playbackNeedsInteraction: false,
     projectTitle: null,
     threadTitle: "Thread",
     ...overrides,
   });
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+it("offers a playback unlock when a direct voice route has no running audio context", () => {
+  const tree = renderVoicePage({ playbackNeedsInteraction: true });
+  const control = findByLabel(tree, "Enable Mai audio playback");
+
+  expect(control).not.toBeNull();
+  control?.props.onClick({ stopPropagation: vi.fn() });
+
+  const session = harness.useVoiceSessionController.mock.results.at(-1)?.value;
+  expect(session?.unlock).toHaveBeenCalledOnce();
+});
 
 describe("VoiceChatPage", () => {
   it("focuses the page and forwards capture suspension state", () => {
