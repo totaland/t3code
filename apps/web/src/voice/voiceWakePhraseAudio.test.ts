@@ -178,6 +178,95 @@ describe("local audio wake phrase", () => {
     expect(onTranscribe).toHaveBeenCalledTimes(2);
   });
 
+  it("requires sustained speech before firing a barge-in trigger", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const onCommand = vi.fn();
+    const onWake = vi.fn();
+    const onSpeechStart = vi.fn();
+    const transcripts = ["Hey Mai"];
+    const onTranscribe = vi.fn(async () => transcripts.shift() ?? "");
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe,
+      onCommand,
+      onSpeechStart,
+      onWake,
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+    emitAudio(0.1);
+    scheduled.shift()?.();
+    await vi.waitFor(() => expect(onWake).toHaveBeenCalledOnce());
+
+    emitAudioSamples(new Float32Array(2_048).fill(0.1));
+    expect(onSpeechStart).not.toHaveBeenCalled();
+
+    emitAudio(0.1);
+    expect(onSpeechStart).toHaveBeenCalledOnce();
+  });
+
+  it("extends endpointing across a mid-thought pause between speech runs", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const onCommand = vi.fn();
+    const onWake = vi.fn();
+    const transcripts = ["Hey Mai", "summarize the thread and then compare it with main"];
+    const onTranscribe = vi.fn(async () => transcripts.shift() ?? "");
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe,
+      onCommand,
+      onWake,
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+    emitAudio(0.1);
+    scheduled.shift()?.();
+    await vi.waitFor(() => expect(onWake).toHaveBeenCalledOnce());
+
+    emitAudio(0.1);
+    emitAudio(0.1);
+    emitAudio(0.1);
+    emitAudio(0.1);
+    emitAudio(0);
+    emitAudio(0);
+    emitAudio(0.1);
+
+    // A 650 ms trailing silence after the short final run must not endpoint
+    // because the capture already shows a pause-resume pattern.
+    emitAudio(0);
+    emitAudio(0);
+    emitAudio(0);
+    expect(onTranscribe).toHaveBeenCalledTimes(1);
+    expect(onCommand).not.toHaveBeenCalled();
+
+    emitAudio(0);
+    emitAudio(0);
+    await vi.waitFor(() =>
+      expect(onCommand).toHaveBeenCalledWith("summarize the thread and then compare it with main"),
+    );
+    expect(onTranscribe).toHaveBeenCalledTimes(2);
+  });
+
   it("ignores a transient noise spike instead of sending a hallucinated transcript", async () => {
     FakeAudioContext.rejectResume = false;
     const scheduled: Array<() => void> = [];

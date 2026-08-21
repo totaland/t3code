@@ -280,10 +280,9 @@ export function useVoiceSessionController(props: {
       listener.pause();
       return;
     }
-    if (props.phase === "speaking") {
-      listener.pause();
-      return;
-    }
+    // Stay live during playback: sustained speech (gated in the audio
+    // listener) barges in and interrupts instead of waiting for the reply
+    // to finish. Echo cancellation plus the onset gate suppress TTS tails.
     listener.resume();
   }, [props.disabled, props.phase]);
 

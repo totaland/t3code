@@ -33,15 +33,18 @@ type LocalAudioSession = {
   readonly processor: ScriptProcessorNode;
   readonly silentOutput: GainNode;
   readonly sampleRate: number;
-  readonly chunkRms: number[];
-  readonly chunks: Float32Array[];
-  readonly resumeOnInteraction: () => void;
+  chunkRms: number[];
+  chunks: Float32Array[];
+  resumeOnInteraction: () => void;
   audibleGeneration: number;
   captureGeneration: number;
   completedCaptureGeneration: number;
   frameCount: number;
+  lastRunFrames: number;
   maxRms: number;
+  onsetEvaluated: boolean;
   probeTimer: unknown | null;
+  previousRunFrames: number;
   silenceFrames: number;
   speechStarted: boolean;
   transcribing: boolean;
@@ -54,6 +57,13 @@ const PROBE_INTERVAL_MS = 2_500;
 const WAKE_AUDIO_WINDOW_MS = 5_000;
 const COMMAND_AUDIO_WINDOW_MS = 30_000;
 const COMMAND_SILENCE_MS = 650;
+// Two or more runs with a short final run usually means the speaker paused
+// mid-thought, so require a longer trailing silence before endpointing.
+const CONTINUATION_SILENCE_MS = 1_100;
+const SHORT_SPEECH_RUN_MS = 900;
+// Sustained speech required before a barge-in trigger fires so brief
+// echo tails from TTS playback cannot interrupt the reply.
+const BARGE_IN_MIN_VOICED_MS = 240;
 const MIN_VOICE_RMS = 0.006;
 const MIN_VOICED_AUDIO_MS = 120;
 
@@ -144,7 +154,10 @@ export function createLocalAudioWakePhraseListener(
     target.chunks.length = 0;
     target.frameCount = 0;
     target.captureGeneration += 1;
+    target.lastRunFrames = -1;
     target.maxRms = 0;
+    target.onsetEvaluated = false;
+    target.previousRunFrames = -1;
     target.silenceFrames = 0;
     target.speechStarted = false;
     target.voicedFrames = 0;
@@ -157,20 +170,39 @@ export function createLocalAudioWakePhraseListener(
     target.speechStarted = false;
     target.voicedFrames = 0;
     target.voicedRunFrames = 0;
+    target.lastRunFrames = -1;
+    target.previousRunFrames = -1;
+    let currentRun = 0;
     for (let index = 0; index < target.chunks.length; index += 1) {
       const chunk = target.chunks[index]!;
       const chunkRms = target.chunkRms[index]!;
       target.maxRms = Math.max(target.maxRms, chunkRms);
       if (chunkRms >= MIN_VOICE_RMS) {
-        target.voicedRunFrames += chunk.length;
-        target.voicedFrames = Math.max(target.voicedFrames, target.voicedRunFrames);
+        currentRun += chunk.length;
+        target.voicedRunFrames = currentRun;
+        target.voicedFrames = Math.max(target.voicedFrames, currentRun);
         target.speechStarted = true;
         target.silenceFrames = 0;
       } else {
+        if (currentRun > 0) {
+          target.previousRunFrames = target.lastRunFrames;
+          target.lastRunFrames = currentRun;
+          currentRun = 0;
+        }
         target.voicedRunFrames = 0;
         if (target.speechStarted) target.silenceFrames += chunk.length;
       }
     }
+    if (target.speechStarted) target.onsetEvaluated = true;
+  };
+
+  const endpointSilenceFrames = (target: LocalAudioSession) => {
+    const shortFinalRun =
+      target.lastRunFrames >= 0 &&
+      target.lastRunFrames < Math.round((target.sampleRate * SHORT_SPEECH_RUN_MS) / 1_000);
+    const midThoughtPause = target.previousRunFrames >= 0 && shortFinalRun;
+    const silenceMs = midThoughtPause ? CONTINUATION_SILENCE_MS : COMMAND_SILENCE_MS;
+    return Math.round((target.sampleRate * silenceMs) / 1_000);
   };
 
   const resetAudio = (target: LocalAudioSession) => {
@@ -351,6 +383,7 @@ export function createLocalAudioWakePhraseListener(
 
     const wav = encodePcm16Wav(target.chunks, target.sampleRate);
     const probedSilenceFrames = target.silenceFrames;
+    const probedEndpointFrames = endpointSilenceFrames(target);
     resetCaptureEvidence(target);
     target.transcribing = true;
     const captureGeneration = target.captureGeneration;
@@ -384,10 +417,8 @@ export function createLocalAudioWakePhraseListener(
     const command = stripVoiceWakePhrase(transcript);
     input.onTranscript?.(command);
     const heardMoreAudio = target.audibleGeneration !== probedAudibleGeneration;
-    const probedSilenceReached =
-      probedSilenceFrames >= Math.round((target.sampleRate * COMMAND_SILENCE_MS) / 1_000);
-    const silenceReached =
-      target.silenceFrames >= Math.round((target.sampleRate * COMMAND_SILENCE_MS) / 1_000);
+    const probedSilenceReached = probedSilenceFrames >= probedEndpointFrames;
+    const silenceReached = target.silenceFrames >= endpointSilenceFrames(target);
 
     if (command.length > 0 && probedSilenceReached && !heardMoreAudio) {
       acceptTranscript(target, transcript, captureGeneration);
@@ -443,8 +474,11 @@ export function createLocalAudioWakePhraseListener(
         chunkRms: [],
         chunks: [],
         frameCount: 0,
+        lastRunFrames: -1,
         maxRms: 0,
+        onsetEvaluated: false,
         probeTimer: null,
+        previousRunFrames: -1,
         silenceFrames: 0,
         speechStarted: false,
         transcribing: false,
@@ -471,19 +505,28 @@ export function createLocalAudioWakePhraseListener(
         if (chunkRms >= MIN_VOICE_RMS) {
           target.voicedRunFrames += chunk.length;
           target.voicedFrames = Math.max(target.voicedFrames, target.voicedRunFrames);
-          const discardTriggerChunk =
-            awake && !target.speechStarted && input.onSpeechStart?.() === true;
-          if (discardTriggerChunk) {
-            resetAudio(target);
-            // Keep the capture window open so post-interruption silence can
-            // settle an echo-only trigger and release the preserved route hold.
-            target.speechStarted = true;
-            return;
+          if (awake && !target.speechStarted && !target.onsetEvaluated) {
+            const bargeInMinVoicedFrames = Math.round(
+              (target.sampleRate * BARGE_IN_MIN_VOICED_MS) / 1_000,
+            );
+            if (target.voicedRunFrames < bargeInMinVoicedFrames) return;
+            target.onsetEvaluated = true;
+            if (input.onSpeechStart?.() === true) {
+              resetAudio(target);
+              // Keep the capture window open so post-interruption silence can
+              // settle an echo-only trigger and release the preserved route hold.
+              target.speechStarted = true;
+              return;
+            }
           }
           target.audibleGeneration += 1;
           target.speechStarted = true;
           target.silenceFrames = 0;
         } else {
+          if (target.voicedRunFrames > 0) {
+            target.previousRunFrames = target.lastRunFrames;
+            target.lastRunFrames = target.voicedRunFrames;
+          }
           target.voicedRunFrames = 0;
           if (target.speechStarted) target.silenceFrames += chunk.length;
         }
@@ -498,7 +541,7 @@ export function createLocalAudioWakePhraseListener(
         }
         if (trimmed) recomputeCaptureEvidence(target);
 
-        const silenceFrames = Math.round((target.sampleRate * COMMAND_SILENCE_MS) / 1_000);
+        const silenceFrames = endpointSilenceFrames(target);
         if (
           awake &&
           !target.transcribing &&

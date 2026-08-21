@@ -281,23 +281,13 @@ describe("useVoiceSessionController", () => {
     expect(harness.listener.pause).toHaveBeenCalledOnce();
     expect(harness.listener.resume).not.toHaveBeenCalled();
   });
-  it("keeps capture paused for all of Mai playback to prevent self-interruption", () => {
-    vi.useFakeTimers();
-    try {
-      createController({ phase: "speaking" });
-      harness.effects[0]?.();
-      const cleanup = harness.effects[1]?.();
+  it("keeps capture live during Mai playback so sustained speech can barge in", () => {
+    createController({ phase: "speaking" });
+    harness.effects[0]?.();
+    harness.effects[1]?.();
 
-      expect(harness.listener.pause).toHaveBeenCalledOnce();
-      expect(harness.listener.resume).not.toHaveBeenCalled();
-
-      vi.runAllTimers();
-
-      expect(harness.listener.resume).not.toHaveBeenCalled();
-      cleanup?.();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(harness.listener.resume).toHaveBeenCalledOnce();
+    expect(harness.listener.pause).not.toHaveBeenCalled();
   });
   it("does not start capture while the route is disabled", () => {
     createController({ disabled: true });
