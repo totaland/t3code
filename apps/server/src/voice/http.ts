@@ -24,7 +24,8 @@ const SYNTHESIZE_PATH = "/api/voice/synthesize";
 const MAX_WAV_BYTES = 20 * 1024 * 1024;
 const MAX_TRANSCRIPT_TEXT_LENGTH = 4_000;
 const MAX_TTS_TEXT_LENGTH = 1_500;
-const MODEL_GATEWAY_TIMEOUT_MS = 45_000;
+const TRANSCRIPTION_GATEWAY_TIMEOUT_MS = 45_000;
+const SYNTHESIS_GATEWAY_TIMEOUT_MS = 195_000;
 const VOICE_BACKENDS = new Set(["auto", "qwen3", "kokoro", "step_audio_editx"]);
 
 export function isSupportedVoiceBackend(value: string): boolean {
@@ -83,7 +84,9 @@ export async function fetchModelGateway(
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${config.apiKey}`);
-  const timeoutSignal = AbortSignal.timeout(MODEL_GATEWAY_TIMEOUT_MS);
+  const timeoutSignal = AbortSignal.timeout(
+    path === "/v1/tts" ? SYNTHESIS_GATEWAY_TIMEOUT_MS : TRANSCRIPTION_GATEWAY_TIMEOUT_MS,
+  );
   return fetchImplementation(new URL(path, config.baseUrl), {
     ...init,
     headers,
@@ -183,7 +186,7 @@ export function createPcmStreamResponse(
   });
 }
 
-const authorizeVoiceRoute = Effect.gen(function* () {
+export const authorizeVoiceRoute = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const session = yield* serverAuth.authenticateHttpRequest(request).pipe(

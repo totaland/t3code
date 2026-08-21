@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { browserApiCorsHeaders } from "../httpCors.ts";
 import {
   fetchModelGateway,
@@ -63,6 +63,25 @@ describe("backend-voice model gateway proxy", () => {
     expect(headers.get("x-api-key")).toBeNull();
     expect(request.init?.body).toBe(wav);
     expect(request.init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("allows Step synthesis to outlive the short transcription timeout", async () => {
+    const gateway = resolveModelGatewayConfig({
+      modelGatewayUrl: "http://localhost:8091",
+      modelGatewayApiKey: "local-test-key-123456",
+    });
+    expect(gateway).not.toBeNull();
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(new AbortController().signal);
+    const fetchImplementation = async () => new Response("ok");
+
+    await fetchModelGateway(gateway!, "/v1/stt", { method: "POST" }, fetchImplementation);
+    await fetchModelGateway(gateway!, "/v1/tts", { method: "POST" }, fetchImplementation);
+
+    expect(timeoutSpy).toHaveBeenNthCalledWith(1, 45_000);
+    expect(timeoutSpy).toHaveBeenNthCalledWith(2, 195_000);
+    timeoutSpy.mockRestore();
   });
 
   it("forwards the selected reply backend with transcription", async () => {

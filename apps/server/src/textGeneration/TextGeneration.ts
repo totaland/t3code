@@ -73,6 +73,21 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface PhoneReplyGenerationMessage {
+  readonly role: "user" | "assistant";
+  readonly text: string;
+}
+
+export interface PhoneReplyGenerationInput {
+  readonly history: ReadonlyArray<PhoneReplyGenerationMessage>;
+  readonly text: string;
+  readonly modelSelection: ModelSelection;
+  readonly signal?: AbortSignal | undefined;
+}
+
+export interface PhoneReplyGenerationResult {
+  readonly text: string;
+}
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -80,6 +95,7 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generatePhoneReply?(input: PhoneReplyGenerationInput): Promise<PhoneReplyGenerationResult>;
 }
 
 /**
@@ -113,6 +129,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Generate a reply for a phone-only conversation. */
+    readonly generatePhoneReply?: (
+      input: PhoneReplyGenerationInput,
+    ) => Effect.Effect<PhoneReplyGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 

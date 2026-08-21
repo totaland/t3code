@@ -281,7 +281,7 @@ describe("useVoiceSessionController", () => {
     expect(harness.listener.pause).toHaveBeenCalledOnce();
     expect(harness.listener.resume).not.toHaveBeenCalled();
   });
-  it("guards Mai playback attack, then restores speaking-phase barge-in", () => {
+  it("keeps capture paused for all of Mai playback to prevent self-interruption", () => {
     vi.useFakeTimers();
     try {
       createController({ phase: "speaking" });
@@ -293,7 +293,7 @@ describe("useVoiceSessionController", () => {
 
       vi.runAllTimers();
 
-      expect(harness.listener.resume).toHaveBeenCalledOnce();
+      expect(harness.listener.resume).not.toHaveBeenCalled();
       cleanup?.();
     } finally {
       vi.useRealTimers();

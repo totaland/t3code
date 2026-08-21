@@ -38,5 +38,10 @@ Remote microphone access requires a secure browser context. Use HTTPS rather tha
 HTTP. The API key stays server-side, and the voice proxy routes require an authenticated T3 session
 with environment operate scope.
 
-This page does not use LiveKit Agents, Expressive mode, SIP, phone bridging, or Company Conductor
-backend voice. Those integrations remain deferred and separate from T3's local STT/TTS gateway.
+This browser page does not use LiveKit Agents, Expressive mode, SIP, or Company Conductor backend
+voice. A separate authenticated `/api/voice/phone/*` lab surface can accept bounded transcript turns
+from a loopback phone bridge. T3 keeps its short conversation history in memory and runs each reply
+through the selected Codex provider in an empty temporary workspace with a private temporary Codex
+home; command, web, app, image, skill-install, and subagent capabilities are disabled. The phone
+surface never receives telephone audio and is not the user's interactive T3 thread. Telephony,
+Whisper, TTS, destination policy, and lifecycle listening remain the bridge's responsibility.
