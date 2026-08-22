@@ -505,17 +505,22 @@ export function createLocalAudioWakePhraseListener(
         if (chunkRms >= MIN_VOICE_RMS) {
           target.voicedRunFrames += chunk.length;
           target.voicedFrames = Math.max(target.voicedFrames, target.voicedRunFrames);
-          if (awake && !target.speechStarted && !target.onsetEvaluated) {
-            const bargeInMinVoicedFrames = Math.round(
-              (target.sampleRate * BARGE_IN_MIN_VOICED_MS) / 1_000,
-            );
-            if (target.voicedRunFrames < bargeInMinVoicedFrames) return;
+          // Speech evidence must be tracked from the first voiced chunk so
+          // choppy real-world audio still endpoints; only the barge-in
+          // trigger waits for a sustained run so echo tails cannot interrupt.
+          if (
+            awake &&
+            !target.onsetEvaluated &&
+            target.voicedRunFrames >=
+              Math.round((target.sampleRate * BARGE_IN_MIN_VOICED_MS) / 1_000)
+          ) {
             target.onsetEvaluated = true;
             if (input.onSpeechStart?.() === true) {
               resetAudio(target);
               // Keep the capture window open so post-interruption silence can
               // settle an echo-only trigger and release the preserved route hold.
               target.speechStarted = true;
+              target.onsetEvaluated = true;
               return;
             }
           }

@@ -215,6 +215,57 @@ describe("local audio wake phrase", () => {
     expect(onSpeechStart).toHaveBeenCalledOnce();
   });
 
+  it("still endpoints choppy speech that never sustains a barge-in run", async () => {
+    FakeAudioContext.rejectResume = false;
+    const scheduled: Array<() => void> = [];
+    const onCommand = vi.fn();
+    const onWake = vi.fn();
+    const onSpeechStart = vi.fn();
+    const transcripts = ["Hey Mai", "what can you do for me?"];
+    const onTranscribe = vi.fn(async () => transcripts.shift() ?? "");
+    const listener = createLocalAudioWakePhraseListener({
+      audioContextConstructor: FakeAudioContext as unknown as new () => AudioContext,
+      getUserMedia: vi.fn(
+        async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+      ),
+      onTranscribe,
+      onCommand,
+      onSpeechStart,
+      onWake,
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return callback;
+      },
+      cancelScheduled: vi.fn(),
+    });
+
+    listener?.start();
+    await vi.waitFor(() => expect(scheduled).toHaveLength(1));
+    emitAudio(0.1);
+    scheduled.shift()?.();
+    await vi.waitFor(() => expect(onWake).toHaveBeenCalledOnce());
+
+    // Real browsers deliver ~85ms chunks at 48kHz and natural speech dips
+    // below the RMS gate between words. Simulate small alternating
+    // voiced/silent chunks so no continuous voiced run reaches 240ms.
+    for (let index = 0; index < 4; index += 1) {
+      emitAudioSamples(new Float32Array(1_024).fill(0.1));
+      emitAudioSamples(new Float32Array(1_024).fill(0.1));
+      emitAudioSamples(new Float32Array(1_024).fill(0));
+    }
+
+    // Trailing silence must endpoint and send even though no sustained run
+    // ever opened the barge-in gate. The choppy pattern reads as a
+    // mid-thought pause, so the extended 1100ms window applies.
+    emitAudio(0);
+    emitAudio(0);
+    emitAudio(0);
+    emitAudio(0);
+    emitAudio(0);
+    await vi.waitFor(() => expect(onCommand).toHaveBeenCalledWith("what can you do for me?"));
+    expect(onSpeechStart).not.toHaveBeenCalled();
+  });
+
   it("extends endpointing across a mid-thought pause between speech runs", async () => {
     FakeAudioContext.rejectResume = false;
     const scheduled: Array<() => void> = [];
