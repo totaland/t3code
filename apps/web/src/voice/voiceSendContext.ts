@@ -54,6 +54,7 @@ export function resolveVoiceSendContext(input: {
     model,
     models: provider.models,
     modelOptions: keptSelection?.options,
+    planModeEnabled: input.settings.planModeEnabled,
   });
 
   return {
