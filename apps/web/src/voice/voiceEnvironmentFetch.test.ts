@@ -38,7 +38,11 @@ describe("voice environment fetch", () => {
     },
     {
       name: "DPoP",
-      connection: prepared({ _tag: "Dpop", accessToken: "access-token" }),
+      connection: prepared({
+        _tag: "Dpop",
+        accessToken: "access-token",
+        expiresAtEpochMs: Number.POSITIVE_INFINITY,
+      }),
       authHeaders: { authorization: "DPoP access-token", dpop: "signed-proof" },
       expectedCredentials: undefined,
       expectedAuthorization: "DPoP access-token",

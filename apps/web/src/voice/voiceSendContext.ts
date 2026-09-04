@@ -60,6 +60,7 @@ export function resolveVoiceSendContext(input: {
   return {
     prompt: "",
     images: [],
+    files: [],
     terminalContexts: [],
     elementContexts: [],
     previewAnnotations: [],
@@ -75,6 +76,8 @@ export function resolveVoiceSendContext(input: {
     selectedProvider: provider.driver,
     selectedModel: model,
     selectedProviderModels: provider.models,
+    interactionMode: "default",
+    interactionModeEnabled: false,
   };
 }
 

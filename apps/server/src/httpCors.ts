@@ -7,11 +7,7 @@ export const browserApiCorsAllowedHeaders = [
   "dpop",
   "x-tts-backend",
 ] as const;
-export const browserApiCorsExposedHeaders = [
-  "X-Audio-Channels",
-  "X-Audio-Sample-Rate",
-] as const;
-
+export const browserApiCorsExposedHeaders = ["X-Audio-Channels", "X-Audio-Sample-Rate"] as const;
 export const browserApiCorsHeaders = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": browserApiCorsAllowedMethods.join(", "),
