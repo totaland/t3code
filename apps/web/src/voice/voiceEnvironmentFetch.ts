@@ -1,6 +1,5 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import { buildEnvironmentAuthHeaders } from "@t3tools/client-runtime/state/environment-http-auth";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -25,13 +24,23 @@ type VoiceEnvironmentFetchDependencies = {
 const defaultBuildAuthHeaders = (prepared: PreparedConnection, requestUrl: string) =>
   runtime.runPromise(
     Effect.gen(function* () {
+      const authorization = prepared.httpAuthorization;
+      if (authorization === null) return {};
+      if (authorization._tag === "Bearer") {
+        return { authorization: "Bearer " + authorization.token };
+      }
       const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-      return yield* buildEnvironmentAuthHeaders(
-        prepared.httpAuthorization,
-        "POST",
-        requestUrl,
-        signer,
-      );
+      if (signer._tag === "None") {
+        return yield* Effect.fail(
+          new Error("No DPoP signer is available to authorize the environment request."),
+        );
+      }
+      const proof = yield* signer.value.createProof({
+        method: "POST",
+        url: requestUrl,
+        accessToken: authorization.accessToken,
+      });
+      return { authorization: "DPoP " + authorization.accessToken, dpop: proof };
     }),
   );
 

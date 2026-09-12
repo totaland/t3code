@@ -62,7 +62,6 @@ export function resolveVoiceSendContext(input: {
     images: [],
     files: [],
     terminalContexts: [],
-    elementContexts: [],
     previewAnnotations: [],
     reviewComments: [],
     selectedPromptEffort: providerState.promptEffort,
