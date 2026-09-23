@@ -381,11 +381,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
                   ? { CODEX_HOME: expandHomePath(codexConfig.homePath) }
                   : {}),
             };
-      const spawnCommand = yield* resolveSpawnCommand(
-        codexConfig.binaryPath || "codex",
-        args,
-        { env: commandEnvironment },
-      );
+      const spawnCommand = yield* resolveSpawnCommand(codexConfig.binaryPath || "codex", args, {
+        env: commandEnvironment,
+      });
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: commandEnvironment,
         cwd,
@@ -565,6 +563,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const { prompt, outputSchema } = buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
+        linkedContext: input.linkedContext,
         attachments: input.attachments,
       });
 
@@ -579,6 +578,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
       return {
         title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
