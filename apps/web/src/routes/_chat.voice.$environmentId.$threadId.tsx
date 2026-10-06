@@ -4,11 +4,10 @@ import { useEffect } from "react";
 import ChatView from "../components/ChatView";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
-import { resolveThreadSyncPhase } from "../threadSync";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
-  useThreadDetail,
+  useThreadProjection,
   useThreadShell,
   useThreadStatus,
 } from "../state/entities";
@@ -24,7 +23,7 @@ function VoiceThreadRouteView() {
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
   );
   const serverThreadShell = useThreadShell(threadRef);
-  const serverThreadDetail = useThreadDetail(threadRef);
+  const serverThreadDetail = useThreadProjection(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
@@ -36,15 +35,9 @@ function VoiceThreadRouteView() {
   );
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
-    serverThreadShellExists: serverThreadShell !== null,
-    serverThreadDetailExists: serverThreadDetail !== null,
-    serverThreadDetailDeleted: serverThreadStatus === "deleted",
+    serverThreadExists: serverThreadShell !== null || serverThreadDetail !== null,
+    serverThreadDeleted: serverThreadStatus === "deleted",
     draftThreadExists,
-  });
-  const threadSyncPhase = resolveThreadSyncPhase({
-    detailExists: serverThreadDetail !== null,
-    shellExists: serverThreadShell !== null,
-    status: serverThreadStatus,
   });
   const environmentHasAnyThreads = environmentThreadRefs.length > 0 || environmentHasDraftThreads;
 
@@ -58,13 +51,12 @@ function VoiceThreadRouteView() {
   if (!threadRef) return null;
 
   return (
-    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh">
       {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
         <ChatView
           environmentId={threadRef.environmentId}
           threadId={threadRef.threadId}
           routeKind="server"
-          threadSyncPhase={threadSyncPhase}
           voiceMode
         />
       ) : null}

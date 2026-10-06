@@ -14,6 +14,7 @@ import {
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
+  type ProviderRepositoryRef,
 } from "./PullRequestProvider.ts";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
 
@@ -114,6 +115,7 @@ export function gitHubProviderFailure(
   if (error._tag === "SourceControlRateLimitPausedError") {
     return { reason: "rate-limited", retryAt: error.retryAt };
   }
+  if (error._tag === "GitHubPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
 
@@ -152,14 +154,12 @@ function withWorkflowApprovals(
   }
   const approvalChecks = runs
     .filter((run) => !representedRunIds.has(run.id))
-    .map(
-      (run): PullRequestCheck => ({
-        name: run.name,
-        status: "action-required",
-        description: "A maintainer must approve this workflow before it can run.",
-        url: run.url,
-      }),
-    );
+    .map((run): PullRequestCheck => ({
+      name: run.name,
+      status: "action-required",
+      description: "A maintainer must approve this workflow before it can run.",
+      url: run.url,
+    }));
   return [
     ...checks,
     ...approvalChecks,
@@ -199,6 +199,57 @@ export const make = Effect.gen(function* () {
       detail: error.detail,
       cause: error,
     });
+
+  const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
+    cli.getPullRequestDetail(input).pipe(
+      Effect.flatMap((pullRequest) =>
+        (pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+          ? Effect.succeed({
+              runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+              unavailable: false,
+            })
+          : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
+            ? Effect.succeed({
+                runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                unavailable: true,
+              })
+            : cli
+                .listWorkflowRunsRequiringApproval({
+                  ...input,
+                  headSha: pullRequest.headSha,
+                  headBranch: pullRequest.headBranch,
+                  headRepositoryOwner: pullRequest.headRepositoryOwner,
+                  isCrossRepository: true,
+                })
+                .pipe(
+                  Effect.matchEffect({
+                    onFailure: (error) =>
+                      error._tag === "GitHubCliRateLimitError" ||
+                      error._tag === "SourceControlRateLimitPausedError"
+                        ? Effect.fail(error)
+                        : Effect.succeed({
+                            runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                            unavailable: true,
+                          }),
+                    onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
+                  }),
+                )
+        ).pipe(
+          Effect.map((workflowApprovals) => ({
+            ...pullRequest,
+            author: withAvatar(pullRequest.author, new Map(), input.host),
+            checks: withWorkflowApprovals(
+              pullRequest.checks,
+              workflowApprovals.runs,
+              workflowApprovals.unavailable,
+            ),
+            ...(workflowApprovals.unavailable
+              ? {}
+              : { workflowApprovalsRequired: workflowApprovals.runs.length }),
+          })),
+        ),
+      ),
+    );
 
   const provider: PullRequestProviderApi = {
     kind: "github",
@@ -309,81 +360,45 @@ export const make = Effect.gen(function* () {
     getChangeRequestStack: (input) =>
       cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
+    getChangeRequestWatchFingerprint: (input) =>
+      cli
+        .getPullRequestWatchFingerprint(input)
+        .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
+
     getChangeRequestPreview: (input) =>
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
+    getChangeRequestChecks: (input) =>
+      cli.revalidateChecks(input, readChecks(input)).pipe(
+        Effect.map(({ state, checks }) => ({ state, checks })),
+        Effect.mapError(fail("getChangeRequestChecks")),
+      ),
+
     getChangeRequest: (input) =>
-      cli.getPullRequestDetail(input).pipe(
-        Effect.flatMap((pullRequest) => {
-          // Fork workflows awaiting approval are absent from the normal check rollup.
-          const approvals =
-            pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
-              ? Effect.succeed({
-                  runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                  unavailable: false,
-                })
-              : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
-                ? Effect.succeed({
-                    runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                    unavailable: true,
-                  })
-                : cli
-                    .listWorkflowRunsRequiringApproval({
-                      ...input,
-                      headSha: pullRequest.headSha,
-                      headBranch: pullRequest.headBranch,
-                      headRepositoryOwner: pullRequest.headRepositoryOwner,
-                      isCrossRepository: true,
-                    })
-                    .pipe(
-                      Effect.matchEffect({
-                        onFailure: (error) =>
-                          error._tag === "GitHubCliRateLimitError" ||
-                          error._tag === "SourceControlRateLimitPausedError"
-                            ? Effect.fail(error)
-                            : Effect.succeed({
-                                runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                                unavailable: true,
-                              }),
-                        onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
-                      }),
-                    );
-          return approvals.pipe(
-            Effect.map(
-              (workflowApprovals): ProviderChangeRequestDetail => ({
-                ...pullRequest,
-                author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
-                checks: withWorkflowApprovals(
-                  pullRequest.checks,
-                  workflowApprovals.runs,
-                  workflowApprovals.unavailable,
-                ),
-                ...(workflowApprovals.unavailable
-                  ? {}
-                  : { workflowApprovalsRequired: workflowApprovals.runs.length }),
-                reviewers: pullRequest.reviewRequestLogins.map((login) => ({
-                  login,
-                  name: null,
-                  avatarUrl: null,
-                })),
-                mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
-                viewerPermissions: gitHubViewerPermissions({
-                  ...pullRequest.viewerAccess,
-                  canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-                }),
-                baseComparison:
-                  pullRequest.comparison === null || pullRequest.comparison.behindBy === null
-                    ? "unknown"
-                    : pullRequest.comparison.behindBy > 0
-                      ? "behind"
-                      : "up-to-date",
-                ...(pullRequest.comparison?.behindBy == null
-                  ? {}
-                  : { behindBy: pullRequest.comparison.behindBy }),
-              }),
-            ),
-          );
-        }),
+      readChecks(input).pipe(
+        Effect.map((pullRequest): ProviderChangeRequestDetail => ({
+          ...pullRequest,
+          author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
+          reviewers: pullRequest.reviewRequestLogins.map((login) => ({
+            login,
+            name: null,
+            avatarUrl: null,
+          })),
+          mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
+          viewerPermissions: gitHubViewerPermissions({
+            ...pullRequest.viewerAccess,
+            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+          }),
+          baseComparison:
+            pullRequest.comparison === null || pullRequest.comparison.behindBy === null
+              ? "unknown"
+              : pullRequest.comparison.behindBy > 0
+                ? "behind"
+                : "up-to-date",
+          ...(pullRequest.comparison?.behindBy == null
+            ? {}
+            : { behindBy: pullRequest.comparison.behindBy }),
+        })),
         Effect.mapError(fail("getChangeRequest")),
       ),
 
@@ -399,9 +414,11 @@ export const make = Effect.gen(function* () {
               dismissalsByReviewId: new Map<string, string>(),
               reactions: [],
               reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+              editedAtById: new Map<string, string>(),
               reviewThreads: [],
               commentCount: 0,
               truncated: true,
+              reviewThreadsTruncated: true,
               reviewers: [],
               avatarsByLogin: new Map<string, string>(),
               botLogins: new Set<string>(),
@@ -417,74 +434,74 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
-            author: withAvatar(
-              pullRequest.author,
-              reviewThreads.avatarsByLogin,
-              input.host,
-              reviewThreads.botLogins,
+        Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
+          author: withAvatar(
+            pullRequest.author,
+            reviewThreads.avatarsByLogin,
+            input.host,
+            reviewThreads.botLogins,
+          ),
+          reviewers: reviewThreads.reviewers,
+          reactions: reviewThreads.reactions,
+          commits: (reviewThreads.commits.length > 0
+            ? reviewThreads.commits
+            : pullRequest.commits
+          ).map((commit) => ({
+            ...commit,
+            ...reviewThreads.commitStats.get(commit.oid),
+            authors: commit.authors?.map(
+              (author) =>
+                withAvatar(
+                  author,
+                  reviewThreads.avatarsByLogin,
+                  input.host,
+                  reviewThreads.botLogins,
+                ) ?? author,
             ),
-            reviewers: reviewThreads.reviewers,
-            reactions: reviewThreads.reactions,
-            commits: (reviewThreads.commits.length > 0
-              ? reviewThreads.commits
-              : pullRequest.commits
-            ).map((commit) => ({
-              ...commit,
-              ...reviewThreads.commitStats.get(commit.oid),
-              authors: commit.authors?.map(
-                (author) =>
-                  withAvatar(
-                    author,
-                    reviewThreads.avatarsByLogin,
-                    input.host,
-                    reviewThreads.botLogins,
-                  ) ?? author,
+          })),
+          comments: [...pullRequest.comments, ...reviewThreads.comments]
+            .map((comment) => ({
+              ...comment,
+              // GitHub keeps the dismissal reason on the timeline event, not on the review,
+              // so a dismissed review with nothing visible of its own reads its words from
+              // there. "Visible" and not "empty": bot reviews often carry only an HTML
+              // marker comment, which markdown renders as nothing.
+              body:
+                comment.kind === "review" &&
+                comment.reviewState?.toUpperCase() === "DISMISSED" &&
+                rendersEmpty(comment.body)
+                  ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
+                  : comment.body,
+              author: withAvatar(
+                comment.author,
+                reviewThreads.avatarsByLogin,
+                input.host,
+                reviewThreads.botLogins,
+              ),
+              // A comment out of `gh pr view --json` carries none of its own: that read
+              // reports no reaction at all, so they arrive from the GraphQL page by node id.
+              reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
+              editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
+            }))
+            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+          // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
+          // are always whole and only the thread walk can stop short of the host.
+          commentCount: pullRequest.comments.length + reviewThreads.commentCount,
+          commentsTruncated: reviewThreads.truncated,
+          reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
+          reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
+            ...thread,
+            comments: thread.comments.map((comment) => ({
+              ...comment,
+              author: withAvatar(
+                comment.author,
+                reviewThreads.avatarsByLogin,
+                input.host,
+                reviewThreads.botLogins,
               ),
             })),
-            comments: [...pullRequest.comments, ...reviewThreads.comments]
-              .map((comment) => ({
-                ...comment,
-                // GitHub keeps the dismissal reason on the timeline event, not on the review,
-                // so a dismissed review with nothing visible of its own reads its words from
-                // there. "Visible" and not "empty": bot reviews often carry only an HTML
-                // marker comment, which markdown renders as nothing.
-                body:
-                  comment.kind === "review" &&
-                  comment.reviewState?.toUpperCase() === "DISMISSED" &&
-                  rendersEmpty(comment.body)
-                    ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
-                    : comment.body,
-                author: withAvatar(
-                  comment.author,
-                  reviewThreads.avatarsByLogin,
-                  input.host,
-                  reviewThreads.botLogins,
-                ),
-                // A comment out of `gh pr view --json` carries none of its own: that read
-                // reports no reaction at all, so they arrive from the GraphQL page by node id.
-                reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
-              }))
-              .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-            // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
-            // are always whole and only the thread walk can stop short of the host.
-            commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-            commentsTruncated: reviewThreads.truncated,
-            reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
-              ...thread,
-              comments: thread.comments.map((comment) => ({
-                ...comment,
-                author: withAvatar(
-                  comment.author,
-                  reviewThreads.avatarsByLogin,
-                  input.host,
-                  reviewThreads.botLogins,
-                ),
-              })),
-            })),
-          }),
-        ),
+          })),
+        })),
       ),
 
     getReviewThreadComments: (input) =>
@@ -572,6 +589,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           number: input.number,
           action: input.action,
+          ...(input.removeAgentCreditsOnMerge === true ? { removeAgentCreditsOnMerge: true } : {}),
           ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
           ...(input.expectedStackHeads === undefined
             ? {}

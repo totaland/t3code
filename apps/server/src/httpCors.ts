@@ -1,3 +1,5 @@
+import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
+
 export const browserApiCorsAllowedMethods = ["GET", "POST", "OPTIONS"] as const;
 export const browserApiCorsAllowedHeaders = [
   "authorization",
@@ -6,6 +8,7 @@ export const browserApiCorsAllowedHeaders = [
   "content-type",
   "dpop",
   "x-tts-backend",
+  ORCHESTRATION_PROTOCOL_HEADER,
 ] as const;
 export const browserApiCorsExposedHeaders = ["X-Audio-Channels", "X-Audio-Sample-Rate"] as const;
 export const browserApiCorsHeaders = {

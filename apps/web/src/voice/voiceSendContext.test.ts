@@ -52,6 +52,8 @@ describe("voice send context", () => {
       selectedModelSelection: expect.objectContaining({ instanceId: "codex", model: "gpt-5" }),
       images: [],
       terminalContexts: [],
+      threadContexts: [],
+      multipleModelSelections: null,
     });
   });
 

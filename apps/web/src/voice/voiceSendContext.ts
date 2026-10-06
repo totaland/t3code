@@ -64,6 +64,7 @@ export function resolveVoiceSendContext(input: {
     terminalContexts: [],
     previewAnnotations: [],
     reviewComments: [],
+    threadContexts: [],
     selectedPromptEffort: providerState.promptEffort,
     selectedModelOptionsForDispatch: providerState.modelOptionsForDispatch,
     selectedModelSelection: createModelSelection(
@@ -71,6 +72,7 @@ export function resolveVoiceSendContext(input: {
       model,
       providerState.modelOptionsForDispatch,
     ),
+    multipleModelSelections: null,
     providerAvailable: true,
     selectedProvider: provider.driver,
     selectedModel: model,

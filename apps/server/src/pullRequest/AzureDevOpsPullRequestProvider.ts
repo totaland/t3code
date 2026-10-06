@@ -25,7 +25,6 @@ import {
   type ProviderDiffSlice,
   type PullRequestProviderApi,
 } from "./PullRequestProvider.ts";
-import type { AzureDevOpsIterationChanges } from "./AzureDevOpsPullRequestCli.ts";
 import type {
   AzureDevOpsChangeEntry,
   AzureDevOpsItemContent,
@@ -118,6 +117,7 @@ export function azureDevOpsProviderFailure(
   if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "AzureDevOpsCliAuthenticationError") return { reason: "unauthenticated" };
   if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
+  if (error._tag === "AzureDevOpsPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
 
@@ -261,15 +261,13 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     ).pipe(
-      Effect.map(
-        ([oldItem, newItem]): AzureDevOpsFileTexts => ({
-          oldContents: oldItem.contents,
-          newContents: newItem.contents,
-          // Azure hands a file it calls binary over in an encoding of its own, so its own word on
-          // that is taken rather than looked for in bytes it may never have sent verbatim.
-          binary: oldItem.isBinary || newItem.isBinary,
-        }),
-      ),
+      Effect.map(([oldItem, newItem]): AzureDevOpsFileTexts => ({
+        oldContents: oldItem.contents,
+        newContents: newItem.contents,
+        // Azure hands a file it calls binary over in an encoding of its own, so its own word on
+        // that is taken rather than looked for in bytes it may never have sent verbatim.
+        binary: oldItem.isBinary || newItem.isBinary,
+      })),
     );
 
   /**
@@ -285,7 +283,10 @@ export const make = Effect.gen(function* () {
   }) => {
     const latest = input.iterations.at(-1);
     return latest === undefined
-      ? Effect.succeed({ changes: [], truncated: false } as AzureDevOpsIterationChanges)
+      ? Effect.succeed({
+          changes: [],
+          truncated: false,
+        } as AzureDevOpsPullRequestCli.AzureDevOpsIterationChanges)
       : cli.listIterationChanges({
           cwd: input.cwd,
           location: input.location,
@@ -332,22 +333,20 @@ export const make = Effect.gen(function* () {
     getChangeRequestSummary: (input) =>
       cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
         Effect.mapError(fail("getChangeRequestSummary")),
-        Effect.map(
-          (pullRequest): ProviderChangeRequestSummary => ({
-            number: pullRequest.number,
-            title: pullRequest.title,
-            url: pullRequest.url,
-            author: pullRequest.author,
-            headBranch: pullRequest.headBranch,
-            baseBranch: pullRequest.baseBranch,
-            state: pullRequest.state,
-            isDraft: pullRequest.isDraft,
-            mergeability: pullRequest.mergeability,
-            closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
-            mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
-            updatedAt: pullRequest.updatedAt,
-          }),
-        ),
+        Effect.map((pullRequest): ProviderChangeRequestSummary => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          headBranch: pullRequest.headBranch,
+          baseBranch: pullRequest.baseBranch,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          mergeability: pullRequest.mergeability,
+          closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+          mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+          updatedAt: pullRequest.updatedAt,
+        })),
       ),
 
     getChangeRequest: (input) =>
@@ -406,15 +405,13 @@ export const make = Effect.gen(function* () {
                   Effect.orElseSucceed(() => ({ comments: [], truncated: true })),
                 )
           ).pipe(
-            Effect.map(
-              (conversation): ProviderChangeRequestActivity => ({
-                comments: conversation.comments,
-                commentCount: conversation.comments.length,
-                commentsTruncated: conversation.truncated,
-                reviewThreads: [],
-                commits: [],
-              }),
-            ),
+            Effect.map((conversation): ProviderChangeRequestActivity => ({
+              comments: conversation.comments,
+              commentCount: conversation.comments.length,
+              commentsTruncated: conversation.truncated,
+              reviewThreads: [],
+              commits: [],
+            })),
           ),
         ),
       ),

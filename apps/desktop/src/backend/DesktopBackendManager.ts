@@ -38,8 +38,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   DesktopBackendBootstrap,
@@ -663,15 +663,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     Ref.update(state, withActiveRun(runId, f));
 
   const snapshot = Ref.get(state).pipe(
-    Effect.map(
-      (current): DesktopBackendSnapshot => ({
-        desiredRunning: current.desiredRunning,
-        ready: current.ready,
-        activePid: activePid(current.active),
-        restartAttempt: current.restartAttempt,
-        restartScheduled: Option.isSome(current.restartFiber),
-      }),
-    ),
+    Effect.map((current): DesktopBackendSnapshot => ({
+      desiredRunning: current.desiredRunning,
+      ready: current.ready,
+      activePid: activePid(current.active),
+      restartAttempt: current.restartAttempt,
+      restartScheduled: Option.isSome(current.restartFiber),
+    })),
   );
   const currentConfig = Ref.get(state).pipe(Effect.map((current) => current.config));
 

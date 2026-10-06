@@ -16,9 +16,11 @@ import * as Stream from "effect/Stream";
 import {
   HttpClient,
   HttpClientResponse,
+  HttpServer,
   HttpServerRequest,
   type HttpClientRequest,
-} from "effect/unstable/http";
+} from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE, EnvironmentId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
@@ -33,6 +35,7 @@ import {
   type ServiceUpdateRecord,
 } from "./serviceProtocol.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import {
@@ -48,19 +51,14 @@ import {
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
+import * as CloudLink from "./CloudLink.ts";
 import {
   consumeCloudReplayGuards,
   isSupportedLinkProviderKind,
   linkProofScopes,
   pendingServiceUpdateExists,
   parseManagedEndpointLocalOrigin,
-  reconcileDesiredCloudLink,
-  reconcileDesiredCloudLinkIfStillDesired,
-  recoverManagedCloudTunnel,
-  registerManagedCloudTunnelRecovery,
-  releaseManagedTunnelOnShutdown,
-  startManagedCloudTunnelIfOriginConfirmed,
-} from "./http.ts";
+} from "./CloudLink.ts";
 import {
   managedTunnelStartupAction,
   retryManagedTunnelRegistration,
@@ -81,6 +79,36 @@ const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   });
 
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
+// Linking wakes the awareness relay; these tests do not run it.
+const idleAwarenessRelay = AgentAwarenessRelay.AgentAwarenessRelay.of({
+  publishThread: () => Effect.void,
+  drain: Effect.void,
+  requestCatchUp: () => Effect.void,
+  start: () => Effect.void,
+});
+// The connect routes register recovery against the listening port; these tests
+// call the service directly.
+const idleHttpServer = HttpServer.HttpServer.of({
+  address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
+  serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+});
+
+const reconcileDesiredCloudLink = (localOrigin: string) =>
+  CloudLink.CloudLink.use((link) => link.reconcileDesiredLink(localOrigin));
+const reconcileDesiredCloudLinkIfStillDesired = (localOrigin: string) =>
+  CloudLink.CloudLink.use((link) => link.reconcileDesiredLinkIfStillDesired(localOrigin));
+const recoverManagedCloudTunnel = (
+  ...args: Parameters<CloudLink.CloudLink["Service"]["recoverManagedTunnel"]>
+) => CloudLink.CloudLink.use((link) => link.recoverManagedTunnel(...args));
+const registerManagedCloudTunnelRecovery = (
+  ...args: Parameters<CloudLink.CloudLink["Service"]["registerManagedTunnelRecovery"]>
+) => CloudLink.CloudLink.use((link) => link.registerManagedTunnelRecovery(...args));
+const releaseManagedTunnelOnShutdown = () =>
+  CloudLink.CloudLink.use((link) => link.releaseManagedTunnelOnShutdown());
+const startManagedCloudTunnelIfOriginConfirmed = (
+  ...args: Parameters<CloudLink.CloudLink["Service"]["startManagedTunnelIfOriginConfirmed"]>
+) => CloudLink.CloudLink.use((link) => link.startManagedTunnelIfOriginConfirmed(...args));
+
 const decodeManagedTunnelRecoveryRegistration = Schema.decodeUnknownEffect(
   Schema.fromJsonString(RelayManagedEndpointRecoveryRegistrationRequest),
 );
@@ -224,6 +252,12 @@ describe("reconcileDesiredCloudLink", () => {
         message: "Run `t3 connect link` to authorize this environment.",
       });
     }).pipe(
+      Effect.provide(CloudLink.layer),
+      Effect.provideService(HttpServer.HttpServer, idleHttpServer),
+      Effect.provideService(
+        ServerConfigModule.ServerConfig,
+        ServerConfigModule.ServerConfig.of({} as ServerConfigModule.ServerConfig["Service"]),
+      ),
       Effect.provideService(
         ServerSecretStore.ServerSecretStore,
         makeSecretStore(unusedSecretStoreOperation),
@@ -241,6 +275,7 @@ describe("reconcileDesiredCloudLink", () => {
           applyConfig: unusedSecretStoreOperation,
           recoveryRequests: Stream.empty,
           requestRecovery: () => Effect.void,
+          tunnelConnected: Stream.empty,
           withLinkStateLock: (effect) => effect,
         } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]),
       ),
@@ -262,6 +297,7 @@ describe("reconcileDesiredCloudLink", () => {
         HttpClient.HttpClient,
         HttpClient.make(() => unusedSecretStoreOperation()),
       ),
+      Effect.provideService(AgentAwarenessRelay.AgentAwarenessRelay, idleAwarenessRelay),
       Effect.provide(NodeServices.layer),
     ),
   );
@@ -374,7 +410,10 @@ describe("releaseManagedTunnelOnShutdown", () => {
     (harness: ReleaseHarness) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
+        Effect.provide(CloudLink.layer),
+        Effect.provideService(HttpServer.HttpServer, idleHttpServer),
         Effect.provideService(ServerSecretStore.ServerSecretStore, harness.store),
+        Effect.provideService(AgentAwarenessRelay.AgentAwarenessRelay, idleAwarenessRelay),
         Effect.provideService(
           ServerEnvironment.ServerEnvironment,
           ServerEnvironment.ServerEnvironment.of({
@@ -400,6 +439,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
               }),
             recoveryRequests: Stream.empty,
             requestRecovery: () => Effect.void,
+            tunnelConnected: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
         ),

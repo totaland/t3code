@@ -13,7 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 import { create } from "zustand";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import {
   DraftId,
@@ -338,7 +338,7 @@ async function runUpload(job: UploadJob): Promise<void> {
 }
 
 function pumpUploads(): void {
-  for (let index = 0; index < queue.length; ) {
+  for (let index = 0; index < queue.length;) {
     const job = queue[index]!;
     const active = activeUploadsByEnvironment.get(job.environmentId) ?? 0;
     if (active >= MAX_UPLOADS_PER_ENVIRONMENT) {

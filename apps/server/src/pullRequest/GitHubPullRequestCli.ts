@@ -1,3 +1,5 @@
+import { removeAgentCredits } from "./mergeMessage.ts";
+import { makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -51,9 +53,10 @@ import {
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestCoreJson,
-  PULL_REQUEST_CORE_GRAPHQL_QUERY,
+  pullRequestCoreGraphQlQuery,
   type GitHubPullRequestCore,
   type GitHubPullRequestSummary,
+  type GitHubPullRequestWatchFingerprint,
   decodePullRequestPreviewJson,
   PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
   decodePullRequestFilesJson,
@@ -65,6 +68,7 @@ import {
   decodePullRequestStacksJson,
   decodePullRequestStatsJson,
   decodePullRequestSummariesJson,
+  decodePullRequestWatchFingerprintsJson,
   decodeReactionSubjectScopeJson,
   decodeReviewerCandidatesJson,
   decodeLabelCandidatesJson,
@@ -75,6 +79,7 @@ import {
   decodeReviewThreadsJson,
   buildPullRequestStatsGraphQlQuery,
   buildPullRequestSummariesGraphQlQuery,
+  buildPullRequestWatchFingerprintsGraphQlQuery,
   buildPullRequestStackMembershipsGraphQlQuery,
   decodePullRequestStackMembershipsJson,
   encodeGraphQlRequestJson,
@@ -445,6 +450,17 @@ class PullRequestSummaryRead extends Request.Class<
   GitHubPullRequestCliError
 > {}
 
+class PullRequestWatchFingerprintRead extends Request.Class<
+  {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+    readonly number: number;
+  },
+  GitHubPullRequestWatchFingerprint | null,
+  GitHubPullRequestCliError
+> {}
+
 export interface GitHubPullRequestSearchBatch {
   /** Rows across every repository asked for, newest update first, each naming its own. */
   readonly items: ReadonlyArray<GitHubPullRequestSearchItem>;
@@ -541,6 +557,18 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<ProviderChangeRequestSummary, GitHubPullRequestCliError>;
+    /**
+     * What a watch compares between passes, batched like summaries. Null when GitHub gave no
+     * answer for this pull request, so the watch reads it in full instead.
+     */
+    readonly getPullRequestWatchFingerprint: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<GitHubPullRequestWatchFingerprint | null, GitHubPullRequestCliError>;
+
+    readonly revalidateChecks: Effect.Success<typeof makeChecksRevalidator>;
 
     readonly getPullRequestDetail: (input: {
       readonly cwd: string;
@@ -734,6 +762,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly action: PullRequestAction;
       readonly stackNumber?: number;
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
+      readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
@@ -1052,6 +1081,35 @@ function cursorVariable(cursor: string | null): readonly [string, string] {
   return cursor === null ? ["-F", "cursor=null"] : ["-f", `cursor=${cursor}`];
 }
 
+const MERGE_MESSAGE_GRAPHQL_QUERY = `
+query PullRequestMergeMessage($owner: String!, $name: String!, $number: Int!, $method: PullRequestMergeMethod!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      isMergeQueueEnabled
+      headRefOid
+      viewerMergeBodyText(mergeType: $method)
+    }
+  }
+}`;
+
+const decodeMergeMessageResponse = Schema.decodeUnknownResult(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Struct({
+        repository: Schema.Struct({
+          pullRequest: Schema.Struct({
+            isMergeQueueEnabled: Schema.Boolean,
+            headRefOid: Schema.String,
+            viewerMergeBodyText: Schema.String,
+          }),
+        }),
+      }),
+    }),
+  ),
+);
+const decodeMergeMessage = (raw: string) =>
+  Result.map(decodeMergeMessageResponse(raw), (response) => response.data.repository.pullRequest);
+
 function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
@@ -1090,6 +1148,7 @@ function actionArgs(
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+  const revalidateChecks = yield* makeChecksRevalidator;
   const routingIdentities = new Map<
     string,
     {
@@ -1591,7 +1650,7 @@ export const make = Effect.gen(function* () {
             ["-F", `number=${input.number}`],
             ["-f", `headRef=refs/pull/${input.number}/head`],
           ],
-          query: PULL_REQUEST_CORE_GRAPHQL_QUERY,
+          query: pullRequestCoreGraphQlQuery(input.host),
           decode: decodePullRequestCoreJson,
         }),
       ),
@@ -1821,7 +1880,12 @@ export const make = Effect.gen(function* () {
       const batchable = entries.filter(
         (entry) => buildPullRequestSummariesGraphQlQuery([entry.request]) !== null,
       );
-      const query = buildPullRequestSummariesGraphQlQuery(batchable.map((entry) => entry.request));
+      // Stack membership rides along where GitHub serves stacks, so the background sync can skip
+      // the REST stack read for pull requests that are in none.
+      const query = buildPullRequestSummariesGraphQlQuery(
+        batchable.map((entry) => entry.request),
+        first.request.host === "github.com",
+      );
       const batched =
         query === null
           ? Effect.succeed(new Map<number, GitHubPullRequestSummary>())
@@ -1878,8 +1942,63 @@ export const make = Effect.gen(function* () {
   const getPullRequestSummary: GitHubPullRequestCli["Service"]["getPullRequestSummary"] = (input) =>
     Effect.request(new PullRequestSummaryRead(input), summaryResolver);
 
+  // Every watched pull request on a host in one read per pass. A pull request the batch has no
+  // answer for gets null, and its watch reads it in full; a failed batch fails every entry.
+  const watchFingerprintResolver = RequestResolver.makeGrouped<
+    PullRequestWatchFingerprintRead,
+    string
+  >({
+    key: ({ request, context }) =>
+      JSON.stringify([
+        request.host.toLowerCase(),
+        Context.getOrElse(context, GitHubCli.PinnedGitHubCredential, () => null)
+          ?.credentialFingerprint ?? null,
+        Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+      ]),
+    resolver: (entries) => {
+      const [first] = entries;
+      const batchable = entries.filter(
+        (entry) => buildPullRequestWatchFingerprintsGraphQlQuery([entry.request]) !== null,
+      );
+      const query = buildPullRequestWatchFingerprintsGraphQlQuery(
+        batchable.map((entry) => entry.request),
+      );
+      const read =
+        query === null
+          ? Effect.succeed(new Map<number, GitHubPullRequestWatchFingerprint>())
+          : graphqlRead({
+              cwd: first.request.cwd,
+              host: first.request.host,
+              operation: "getPullRequestWatchFingerprint",
+              query,
+              decode: decodePullRequestWatchFingerprintsJson,
+            });
+      return read.pipe(
+        Effect.map((fingerprints) => {
+          for (const entry of entries) {
+            const index = batchable.indexOf(entry);
+            entry.completeUnsafe(
+              Exit.succeed(index === -1 ? null : (fingerprints.get(index) ?? null)),
+            );
+          }
+        }),
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            for (const entry of entries) entry.completeUnsafe(Exit.failCause(cause));
+          }),
+        ),
+      );
+    },
+  }).pipe(
+    RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
+    RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
+  );
+  const getPullRequestWatchFingerprint: GitHubPullRequestCli["Service"]["getPullRequestWatchFingerprint"] =
+    (input) => Effect.request(new PullRequestWatchFingerprintRead(input), watchFingerprintResolver);
+
   return GitHubPullRequestCli.of({
     withVerifiedCredential,
+    revalidateChecks,
     getRoutingIdentity,
     getViewerLogin: (input) =>
       getRoutingIdentity(input).pipe(Effect.map((identity) => identity.viewer)),
@@ -2084,6 +2203,7 @@ export const make = Effect.gen(function* () {
     },
 
     getPullRequestSummary,
+    getPullRequestWatchFingerprint,
 
     getPullRequestDetail,
     getPullRequestPreview: (input) => {
@@ -2328,6 +2448,7 @@ export const make = Effect.gen(function* () {
         let reviewers: ReadonlyArray<PullRequestActor> = [];
         let reactions: GitHubReviewThreadPage["reactions"] = [];
         const reactionsById = new Map<string, ReadonlyArray<PullRequestReaction>>();
+        const editedAtById = new Map<string, string>();
         let commits: GitHubReviewThreadPage["commits"] = [];
         let viewer: GitHubReviewThreadPage["viewer"] = { canUpdate: true, didAuthor: false };
         const dismissalsByReviewId = new Map<string, string>();
@@ -2346,6 +2467,7 @@ export const make = Effect.gen(function* () {
             reviewers = read.reviewers;
             reactions = read.reactions;
             for (const [id, entry] of read.reactionsById) reactionsById.set(id, entry);
+            for (const [id, editedAt] of read.editedAtById) editedAtById.set(id, editedAt);
             commits = read.commits;
             viewer = read.viewer;
             for (const [id, message] of read.dismissalsByReviewId)
@@ -2399,8 +2521,10 @@ export const make = Effect.gen(function* () {
           // where a bound kept some of the words on GitHub.
           commentCount: entries.reduce((total, entry) => total + entry.commentCount, 0),
           truncated: cursor !== null || entries.some((entry) => entry.nextCommentCursor !== null),
+          reviewThreadsTruncated: cursor !== null,
           reactions,
           reactionsById,
+          editedAtById,
           reviewers,
           avatarsByLogin,
           botLogins,
@@ -2642,12 +2766,52 @@ export const make = Effect.gen(function* () {
         input.mergeMethod,
         input.updateMethod,
       );
-      return github
-        .execute({
+      return Effect.gen(function* () {
+        let body: string | undefined;
+        let expectedHead: string | undefined;
+        if (
+          input.removeAgentCreditsOnMerge === true &&
+          (input.action === "merge" || input.action === "enable-auto-merge") &&
+          input.mergeMethod !== "rebase"
+        ) {
+          const { owner, name } = parseRepositorySelector(input.repository);
+          const message = yield* graphqlRead({
+            cwd: input.cwd,
+            host: input.host,
+            operation: "runPullRequestAction",
+            allowReserve: true,
+            query: MERGE_MESSAGE_GRAPHQL_QUERY,
+            variables: [
+              ["-f", `owner=${owner}`],
+              ["-f", `name=${name}`],
+              ["-F", `number=${input.number}`],
+              ["-f", `method=${input.mergeMethod === "squash" ? "SQUASH" : "MERGE"}`],
+            ],
+            decode: decodeMergeMessage,
+          });
+          // GitHub's merge queue chooses its own message and ignores custom text.
+          if (!message.isMergeQueueEnabled) {
+            const cleaned = removeAgentCredits(message.viewerMergeBodyText);
+            if (cleaned !== message.viewerMergeBodyText) {
+              body = cleaned;
+              expectedHead = message.headRefOid;
+            }
+          }
+        }
+        yield* github.execute({
           cwd: input.cwd,
-          args: ["pr", subcommand!, String(input.number), ...repositoryArgs(input), ...flags],
-        })
-        .pipe(Effect.asVoid);
+          args: [
+            "pr",
+            subcommand!,
+            String(input.number),
+            ...repositoryArgs(input),
+            ...flags,
+            ...(expectedHead === undefined ? [] : ["--match-head-commit", expectedHead]),
+            ...(body === undefined ? [] : ["--body-file", "-"]),
+          ],
+          ...(body === undefined ? {} : { stdin: body }),
+        });
+      });
     },
 
     commentOnPullRequest: (input) =>

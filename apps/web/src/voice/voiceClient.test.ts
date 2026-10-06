@@ -86,20 +86,20 @@ describe("local voice client", () => {
 describe("voice turn correlation", () => {
   it("returns only a completed assistant reply from the captured user turn", () => {
     const messages = [
-      { id: "old-user", role: "user", text: "old", turnId: "turn-old", streaming: false },
+      { id: "old-user", role: "user", text: "old", runId: "turn-old", streaming: false },
       {
         id: "old-assistant",
         role: "assistant",
         text: "Do not speak this",
-        turnId: "turn-old",
+        runId: "turn-old",
         streaming: false,
       },
-      { id: "voice-user", role: "user", text: "hello", turnId: null, streaming: false },
+      { id: "voice-user", role: "user", text: "hello", runId: null, streaming: false },
       {
         id: "voice-stream",
         role: "assistant",
         text: "partial",
-        turnId: "turn-voice",
+        runId: "turn-voice",
         streaming: true,
       },
     ];
@@ -114,7 +114,7 @@ describe("voice turn correlation", () => {
         id: "voice-assistant-ready",
         role: "assistant",
         text: "Speak this reply",
-        turnId: "turn-voice",
+        runId: "turn-voice",
         streaming: false,
       },
     ];
@@ -130,20 +130,20 @@ describe("voice turn correlation", () => {
 
   it("stops response correlation at the next user turn", () => {
     const messages = [
-      { id: "voice-user", role: "user", text: "hello", turnId: null, streaming: false },
+      { id: "voice-user", role: "user", text: "hello", runId: null, streaming: false },
       {
         id: "voice-assistant",
         role: "assistant",
         text: "Speak only this reply",
-        turnId: "turn-voice",
+        runId: "turn-voice",
         streaming: false,
       },
-      { id: "next-user", role: "user", text: "follow-up", turnId: null, streaming: false },
+      { id: "next-user", role: "user", text: "follow-up", runId: null, streaming: false },
       {
         id: "next-assistant",
         role: "assistant",
         text: "Do not speak this yet",
-        turnId: "turn-next",
+        runId: "turn-next",
         streaming: false,
       },
     ];
@@ -162,19 +162,19 @@ describe("voice turn correlation", () => {
   });
   it("queues every completed assistant message once in source order", () => {
     const messages = [
-      { id: "voice-user", role: "user", text: "hello", turnId: null, streaming: false },
+      { id: "voice-user", role: "user", text: "hello", runId: null, streaming: false },
       {
         id: "progress",
         role: "assistant",
         text: "I am checking that now.",
-        turnId: "turn-voice",
+        runId: "turn-voice",
         streaming: false,
       },
       {
         id: "final",
         role: "assistant",
         text: "The fix is complete.",
-        turnId: "turn-voice",
+        runId: "turn-voice",
         streaming: false,
       },
     ];
@@ -207,8 +207,8 @@ describe("voice turn correlation", () => {
   it("splits a long completed reply into synthesizable chunks", () => {
     const text = `${"A long story sentence. ".repeat(80)}the ending.`;
     const messages = [
-      { id: "voice-user", role: "user", text: "tell me a story", turnId: null, streaming: false },
-      { id: "story", role: "assistant", text, turnId: "turn-voice", streaming: false },
+      { id: "voice-user", role: "user", text: "tell me a story", runId: null, streaming: false },
+      { id: "story", role: "assistant", text, runId: "turn-voice", streaming: false },
     ];
     const spoken = new Map<string, number>();
 

@@ -1,11 +1,16 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
 import { runtime } from "../lib/runtime";
 import { readPreparedConnection } from "../state/session";
 import type { VoiceFetch } from "./voiceClient";
+
+class VoiceEnvironmentAuthorizationError extends Data.TaggedError(
+  "VoiceEnvironmentAuthorizationError",
+)<{ readonly message: string }> {}
 
 type VoiceAuthHeaders = {
   readonly authorization?: string;
@@ -32,7 +37,9 @@ const defaultBuildAuthHeaders = (prepared: PreparedConnection, requestUrl: strin
       const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
       if (signer._tag === "None") {
         return yield* Effect.fail(
-          new Error("No DPoP signer is available to authorize the environment request."),
+          new VoiceEnvironmentAuthorizationError({
+            message: "No DPoP signer is available to authorize the environment request.",
+          }),
         );
       }
       const proof = yield* signer.value.createProof({

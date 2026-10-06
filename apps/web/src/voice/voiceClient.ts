@@ -136,7 +136,7 @@ export type VoiceTurnMessage = {
   readonly id: string;
   readonly role: string;
   readonly text: string;
-  readonly turnId: string | null;
+  readonly runId: string | null;
   readonly streaming: boolean;
 };
 

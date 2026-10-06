@@ -5,8 +5,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
-import type { HttpClient } from "effect/unstable/http";
-import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import type { HttpClient } from "effect/http";
+import { OtlpSerialization, OtlpTracer } from "effect/observability";
 
 export interface RelayClientTracingConfig {
   readonly tracesUrl: string;
@@ -124,7 +124,7 @@ function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   });
 }
 
-export function makeRelayClientTracingLayer(
+export function layer(
   config: RelayClientTracingConfig | null,
   resource: RelayClientTracingResource,
 ): Layer.Layer<never, never, HttpClient.HttpClient> {
@@ -132,7 +132,7 @@ export function makeRelayClientTracingLayer(
     return Layer.succeed(RelayClientTracer, Option.none());
   }
 
-  const tracerLayer = OtlpTracer.layer({
+  const layerTracer = OtlpTracer.layer({
     url: config.tracesUrl,
     headers: {
       Authorization: `Bearer ${config.tracesToken}`,
@@ -142,6 +142,7 @@ export function makeRelayClientTracingLayer(
       serviceName: resource.serviceName,
       serviceVersion: resource.serviceVersion,
       attributes: {
+        "service.namespace": "t3code",
         "service.runtime": resource.runtime,
         "service.component": resource.component ?? "relay-client",
         "t3.client.surface": resource.client,
@@ -152,5 +153,5 @@ export function makeRelayClientTracingLayer(
   return Layer.effect(
     RelayClientTracer,
     Tracer.Tracer.pipe(Effect.map(nonInterferingTracer), Effect.asSome),
-  ).pipe(Layer.provide(tracerLayer));
+  ).pipe(Layer.provide(layerTracer));
 }
