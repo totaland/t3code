@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- The synchronous session store accepts an injectable UUID factory.
 import * as NodeCrypto from "node:crypto";
 
 import type {

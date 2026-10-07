@@ -360,6 +360,7 @@ vi.mock("../state/entities", async () => {
   };
   return {
     useActiveEnvironmentId: () => "env-one",
+    useEnvironmentSupportsServerBrowser: () => false,
     useEnvironmentThreadRefs: () => [{ environmentId: "env-one", threadId: "thread-two" }],
     useProject: () => harness.project,
     useProjects: () => [harness.project],
