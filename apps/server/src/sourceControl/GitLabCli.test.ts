@@ -1,7 +1,7 @@
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
 
@@ -39,14 +39,14 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               iid: 42,
               title: "Add MR thread creation",
               web_url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
               target_branch: "main",
               source_branch: "feature/mr-threads",
-              state: "opened",
+              state: "closed",
+              closed_at: "2026-08-23T10:00:00Z",
               source_project_id: 101,
               target_project_id: 100,
               source_project: {
@@ -71,7 +71,9 @@ layer("GitLabCli.layer", (it) => {
         url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
         baseRefName: "main",
         headRefName: "feature/mr-threads",
-        state: "open",
+        state: "closed",
+        closedAt: "2026-08-23T10:00:00Z",
+        mergedAt: null,
         isCrossRepository: true,
         headRepositoryNameWithOwner: "octocat/t3code",
         headRepositoryOwnerLogin: "octocat",
@@ -91,7 +93,6 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 iid: 0,
@@ -107,6 +108,7 @@ layer("GitLabCli.layer", (it) => {
                 target_branch: " main ",
                 source_branch: " feature/mr-list ",
                 state: "merged",
+                merged_at: "2026-08-23T11:00:00Z",
               },
             ]),
           ),
@@ -130,6 +132,8 @@ layer("GitLabCli.layer", (it) => {
           baseRefName: "main",
           headRefName: "feature/mr-list",
           state: "merged",
+          closedAt: null,
+          mergedAt: "2026-08-23T11:00:00Z",
         },
       ]);
       expect(mockedRun).toHaveBeenCalledWith(
@@ -157,7 +161,6 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               path_with_namespace: "octocat/t3code",
               web_url: "https://gitlab.com/octocat/t3code",
@@ -224,18 +227,10 @@ layer("GitLabCli.layer", (it) => {
     Effect.gen(function* () {
       mockedRun
 
+        .mockReturnValueOnce(Effect.succeed(processOutput(JSON.stringify({ id: 1234 }))))
         .mockReturnValueOnce(
           Effect.succeed(
             processOutput(
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
-              JSON.stringify({ id: 1234 }),
-            ),
-          ),
-        )
-        .mockReturnValueOnce(
-          Effect.succeed(
-            processOutput(
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify({
                 path_with_namespace: "octocat/t3code",
                 web_url: "https://gitlab.com/octocat/t3code",
@@ -361,6 +356,28 @@ layer("GitLabCli.layer", (it) => {
       }).pipe(Effect.flip);
 
       assert.strictEqual(error._tag, "GitLabCliCommandError");
+      assert.strictEqual(error.cause, cause);
+    }),
+  );
+
+  it.effect("preserves rate-limit failures as a distinct error", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "API rate limit exceeded.",
+        failureKind: "rate-limited",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .execute({ cwd: "/repo", args: ["api", "projects"] })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabCliRateLimitError");
       assert.strictEqual(error.cause, cause);
     }),
   );

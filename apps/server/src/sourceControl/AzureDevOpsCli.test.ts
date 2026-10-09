@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -21,13 +21,13 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
 
 const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
-const supportLayer = Layer.mergeAll(
+const layerSupport = Layer.mergeAll(
   Layer.mock(VcsProcess.VcsProcess)({
     run: mockRun,
   }),
   NodeServices.layer,
 );
-const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(supportLayer)), supportLayer);
+const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
 
 afterEach(() => {
   mockRun.mockReset();
@@ -39,7 +39,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               pullRequestId: 42,
               title: "Add Azure provider",
@@ -97,7 +96,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               pullRequestId: 863,
               title: "Fix Azure link",
@@ -134,7 +132,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 pullRequestId: 7,
@@ -163,6 +160,8 @@ describe("AzureDevOpsCli.layer", () => {
       });
 
       assert.strictEqual(result[0]?.state, "merged");
+      assert.strictEqual(result[0]?.mergedAt, "2026-01-03T00:00:00.000Z");
+      assert.strictEqual(result[0]?.closedAt, null);
       expect(mockRun).toHaveBeenCalledWith({
         operation: "AzureDevOpsCli.execute",
         command: "az",
@@ -193,7 +192,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               name: "repo",
               webUrl: "https://dev.azure.com/acme/project/_git/repo",
@@ -226,7 +224,6 @@ describe("AzureDevOpsCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               name: "repo",
               webUrl: "https://dev.azure.com/acme/project/_git/repo",
@@ -332,6 +329,28 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("forwards explicit output limits to the process boundary", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.execute({
+        cwd: "/repo",
+        args: ["repos", "pr", "list"],
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: ["repos", "pr", "list"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("preserves VCS causes without copying upstream details into messages", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
@@ -403,6 +422,27 @@ describe("AzureDevOpsCli.layer", () => {
         error.message,
         "Azure DevOps CLI failed in getPullRequest: Azure DevOps CLI returned invalid pull request JSON.",
       );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("preserves rate-limit failures as a distinct error", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        cwd: "/repo",
+        argumentCount: 2,
+        exitCode: 1,
+        detail: "API rate limit exceeded.",
+        failureKind: "rate-limited",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.execute({ cwd: "/repo", args: ["repos", "list"] }).pipe(Effect.flip);
+
+      assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCliRateLimitError);
+      assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(layer)),
   );
 });

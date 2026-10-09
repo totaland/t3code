@@ -1,8 +1,8 @@
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
-  ProviderDriverKind,
   ProviderInstanceConfig,
+  PreviewViewportSetting,
   ProviderInstanceId,
   ServerSettings,
   SidebarProjectGroupingMode,
@@ -108,6 +108,67 @@ export function getChangedTypographySettingLabels(settings: TypographySettings):
   ];
 }
 
+export type BrowserDefaultSettings = Pick<
+  UnifiedSettings,
+  | "browserDefaultViewport"
+  | "browserDefaultZoomFactor"
+  | "browserDefaultAppearance"
+  | "browserRecordingFrameRate"
+  | "browserRecordingShowKeyPresses"
+  | "browserRecordingShowMousePresses"
+  | "browserLinkTarget"
+  | "browserAutoShowFloatingPreview"
+>;
+
+/**
+ * True when two viewport settings describe the same viewport.
+ *
+ * The setting is a tagged union rather than a scalar, so identity comparison
+ * reports every stored viewport as changed — including one that matches the
+ * default.
+ */
+function isSamePreviewViewport(
+  left: PreviewViewportSetting,
+  right: PreviewViewportSetting,
+): boolean {
+  if (left._tag !== right._tag) return false;
+  if (left._tag === "fill" || right._tag === "fill") return true;
+  if (left.width !== right.width || left.height !== right.height) return false;
+  return left._tag === "preset" && right._tag === "preset"
+    ? left.presetId === right.presetId
+    : true;
+}
+
+/** Labels the browser-default rows that differ from the defaults. */
+export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings): string[] {
+  return [
+    ...(isSamePreviewViewport(
+      settings.browserDefaultViewport,
+      DEFAULT_UNIFIED_SETTINGS.browserDefaultViewport,
+    )
+      ? []
+      : ["Browser viewport"]),
+    ...(settings.browserDefaultZoomFactor !== DEFAULT_UNIFIED_SETTINGS.browserDefaultZoomFactor
+      ? ["Browser zoom"]
+      : []),
+    ...(settings.browserDefaultAppearance !== DEFAULT_UNIFIED_SETTINGS.browserDefaultAppearance
+      ? ["Browser appearance"]
+      : []),
+    ...(settings.browserRecordingFrameRate !== DEFAULT_UNIFIED_SETTINGS.browserRecordingFrameRate
+      ? ["Recording frame rate"]
+      : []),
+    ...(settings.browserRecordingShowKeyPresses ? ["Recording key presses"] : []),
+    ...(settings.browserRecordingShowMousePresses ? ["Recording mouse presses"] : []),
+    ...(settings.browserLinkTarget !== DEFAULT_UNIFIED_SETTINGS.browserLinkTarget
+      ? ["Open links in"]
+      : []),
+    ...(settings.browserAutoShowFloatingPreview !==
+    DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
+      ? ["Floating preview"]
+      : []),
+  ];
+}
+
 export function resolveBackgroundActivityProfileOption(
   settings: ServerSettings,
 ): BackgroundActivityProfile | "advanced" {
@@ -193,30 +254,14 @@ export function formatDiagnosticsDescription(input: {
 }
 
 export function buildProviderInstanceUpdatePatch(input: {
-  readonly settings: Pick<ServerSettings, "providers" | "providerInstances">;
+  readonly settings: Pick<ServerSettings, "providerInstances">;
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
-  readonly driver: ProviderDriverKind;
-  readonly isDefault: boolean;
   readonly textGenerationModelSelection?:
     | ServerSettings["textGenerationModelSelection"]
     | undefined;
 }): Partial<UnifiedSettings> {
-  type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
-  const legacyProviderDefaults = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-    string,
-    LegacyProviderSettings | undefined
-  >;
-  const legacyProviderDefault = input.isDefault ? legacyProviderDefaults[input.driver] : undefined;
   return {
-    ...(legacyProviderDefault !== undefined
-      ? {
-          providers: {
-            ...input.settings.providers,
-            [input.driver]: legacyProviderDefault,
-          } as ServerSettings["providers"],
-        }
-      : {}),
     providerInstances: {
       ...input.settings.providerInstances,
       [input.instanceId]: input.instance,

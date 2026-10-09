@@ -5,12 +5,12 @@ describe("streaming voice replies", () => {
   it("speaks completed sentences before the assistant message finishes", () => {
     const progress = new Map<string, number>();
     const messages: VoiceTurnMessage[] = [
-      { id: "user", role: "user", text: "hello", turnId: null, streaming: false },
+      { id: "user", role: "user", text: "hello", runId: null, streaming: false },
       {
         id: "assistant",
         role: "assistant",
         text: "First sentence. Second still streaming",
-        turnId: "turn",
+        runId: "turn",
         streaming: true,
       },
     ];
@@ -38,12 +38,12 @@ describe("streaming voice replies", () => {
 
   it("waits while a streaming fragment has no complete sentence", () => {
     const messages: VoiceTurnMessage[] = [
-      { id: "user", role: "user", text: "hello", turnId: null, streaming: false },
+      { id: "user", role: "user", text: "hello", runId: null, streaming: false },
       {
         id: "assistant",
         role: "assistant",
         text: "Still composing this sentence",
-        turnId: "turn",
+        runId: "turn",
         streaming: true,
       },
     ];

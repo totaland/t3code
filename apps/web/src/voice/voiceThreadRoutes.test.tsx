@@ -1,6 +1,7 @@
 import {
   createMemoryHistory,
   Match,
+  useParams,
   Outlet,
   RouterContextProvider,
   type RouterHistory,
@@ -15,7 +16,7 @@ const harness = vi.hoisted(() => {
       id: "message-1",
       role: "user",
       text: "Keep this history",
-      turnId: null,
+      runId: null,
       createdAt: "2026-08-14T00:00:00.000Z",
       updatedAt: "2026-08-14T00:00:00.000Z",
       streaming: false,
@@ -24,7 +25,7 @@ const harness = vi.hoisted(() => {
       id: "message-2",
       role: "assistant",
       text: "History retained",
-      turnId: null,
+      runId: null,
       createdAt: "2026-08-14T00:00:01.000Z",
       updatedAt: "2026-08-14T00:00:01.000Z",
       streaming: false,
@@ -48,6 +49,7 @@ const harness = vi.hoisted(() => {
     environmentId: "env-one",
     title: "Project",
     workspaceRoot: "/workspace",
+    scripts: [],
     defaultModelSelection: { instanceId: "codex", model: "gpt-5", options: {} },
   };
   const thread = {
@@ -69,13 +71,68 @@ const harness = vi.hoisted(() => {
     settledOverride: null,
     settledAt: null,
     deletedAt: null,
-    latestTurn: null,
+    latestRun: null,
+    runtime: null,
+    source: null,
+    lineage: { rootThreadId: "thread-two", parentThreadId: null, relationshipToParent: null },
+    creationSource: "web",
+    createdBy: "user",
+    forkedFrom: null,
     branch: null,
     worktreePath: null,
   };
+  const visibleTurnItems = messages.map((message, position) => ({
+    position,
+    visibility: "local",
+    sourceThreadId: thread.id,
+    sourceItemId: `item-${message.id}`,
+    item: {
+      id: `item-${message.id}`,
+      threadId: thread.id,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: position + 1,
+      status: "completed",
+      title: null,
+      startedAt: message.createdAt,
+      completedAt: message.updatedAt,
+      updatedAt: message.updatedAt,
+      createdBy: message.role === "user" ? "user" : "provider",
+      creationSource: "web",
+      type: message.role === "user" ? "user_message" : "assistant_message",
+      messageId: message.id,
+      inputIntent: "turn_start",
+      text: message.text,
+      attachments: [],
+    },
+  }));
+  const projection = {
+    thread: { ...thread, activeProviderThreadId: null },
+    runs: [],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages,
+    plans: [],
+    turnItems: visibleTurnItems.map(({ item }) => item),
+    checkpointScopes: [],
+    checkpoints: [],
+    contextHandoffs: [],
+    contextTransfers: [],
+    visibleTurnItems,
+    updatedAt: thread.updatedAt,
+  };
   const serverConfig = {
     providers: [provider],
-    environment: { capabilities: { pullRequests: false } },
+    environment: { capabilities: { pullRequests: false }, platform: { machine: "server" } },
   };
   const environment = {
     environmentId: "env-one",
@@ -89,6 +146,8 @@ const harness = vi.hoisted(() => {
     messages,
     micOff: vi.fn(),
     project,
+    projection,
+    visibleTurnItems,
     thread,
   };
 });
@@ -141,6 +200,8 @@ vi.mock("../components/ui/tooltip", async () => {
   return {
     Tooltip: ({ children }: { readonly children?: ReactNode }) =>
       React.createElement(React.Fragment, null, children),
+    TooltipScrollDismissArea: ({ children }: { readonly children?: ReactNode }) =>
+      React.createElement(React.Fragment, null, children),
     TooltipPopup: ({ children }: { readonly children?: ReactNode }) =>
       React.createElement(React.Fragment, null, children),
     TooltipTrigger: ({ render }: { readonly render: ReactNode }) => render,
@@ -186,6 +247,10 @@ vi.mock("../composerDraftStore", async () => {
   const draft = {
     prompt: "Unsent draft",
     images: [],
+    files: [],
+    persistedAttachments: [],
+    threadContexts: [],
+    modelSelectionByProvider: {},
     terminalContexts: [],
     elementContexts: [],
     previewAnnotations: [],
@@ -200,7 +265,9 @@ vi.mock("../composerDraftStore", async () => {
   const store = new Proxy(
     {
       draftThreadsByThreadKey: {},
+      rewindingThreadKeys: new Set<string>(),
       getComposerDraft: () => draft,
+      getDraftIdByRef: () => null,
       getDraftSession: () => null,
       getDraftSessionByRef: () => null,
       getDraftThreadByRef: () => null,
@@ -221,6 +288,8 @@ vi.mock("../composerDraftStore", async () => {
   return {
     ...actual,
     finalizePromotedDraftThreadByRef: vi.fn(),
+    useBackgroundDraftSubmissionPending: () => false,
+    markPromotedDraftThreadByRef: vi.fn(),
     useComposerDraftStore: (selector: (value: typeof store) => unknown) => selector(store),
     useComposerThreadDraft: () => draft,
     useEffectiveComposerModelState: () => ({
@@ -243,18 +312,80 @@ vi.mock("../promptStashStore", async () => {
   };
 });
 
-vi.mock("../state/entities", () => ({
-  useActiveEnvironmentId: () => "env-one",
-  useEnvironmentThreadRefs: () => [{ environmentId: "env-one", threadId: "thread-two" }],
-  useProject: () => harness.project,
-  useProjects: () => [harness.project],
-  useServerConfigs: () => new Map([["env-one", harness.environment.serverConfig]]),
-  useThread: () => harness.thread,
-  useThreadDetail: () => harness.thread,
-  useThreadRefs: () => [{ environmentId: "env-one", threadId: "thread-two" }],
-  useThreadShell: () => harness.thread,
-  useThreadStatus: () => "live",
-}));
+vi.mock("../state/entities", async () => {
+  const DateTime = await import("effect/DateTime");
+  const { makeThreadFixture } = await import("../test-fixtures");
+  const { ThreadId, ProjectId, EnvironmentId, ProviderInstanceId } =
+    await import("@t3tools/contracts");
+  const shell = makeThreadFixture({
+    id: ThreadId.make(harness.thread.id),
+    environmentId: EnvironmentId.make(harness.thread.environmentId),
+    projectId: ProjectId.make(harness.thread.projectId),
+    title: harness.thread.title,
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+    itemCount: harness.messages.length,
+    visibleItemCount: harness.messages.length,
+  });
+  const visibleTurnItems = harness.visibleTurnItems.map((row) => ({
+    ...row,
+    item: {
+      ...row.item,
+      startedAt: DateTime.makeUnsafe(row.item.startedAt),
+      completedAt: DateTime.makeUnsafe(row.item.completedAt),
+      updatedAt: DateTime.makeUnsafe(row.item.updatedAt),
+      streaming: false,
+    },
+  }));
+  const projection = {
+    ...harness.projection,
+    thread: { ...harness.projection.thread, providerInstanceId: "codex", pullRequests: [] },
+    turnItems: visibleTurnItems.map(({ item }) => item),
+    visibleTurnItems,
+    updatedAt: DateTime.makeUnsafe(harness.projection.updatedAt),
+  };
+  return {
+    useActiveEnvironmentId: () => "env-one",
+    useEnvironmentSupportsServerBrowser: () => false,
+    useEnvironmentThreadRefs: () => [{ environmentId: "env-one", threadId: "thread-two" }],
+    useProject: () => harness.project,
+    useProjects: () => [harness.project],
+    useServerConfigs: () => new Map([["env-one", harness.environment.serverConfig]]),
+    useThread: () => harness.thread,
+    useThreadDetail: () => harness.thread,
+    useThreadRefs: () => [{ environmentId: "env-one", threadId: "thread-two" }],
+    useThreadShells: () => [shell],
+    useThreadShell: () => shell,
+    resolveThreadDetailRef: (ref: unknown) => ref,
+    useThreadProjection: () => ({ projection }),
+    useThreadVisibleTurnItems: () => visibleTurnItems,
+    useThreadHistory: () => ({ hasMoreHistory: false, loading: false, error: null }),
+    useThreadStatus: () => "live",
+  };
+});
+
+vi.mock("../state/pullRequests", async () => {
+  const actual =
+    await vi.importActual<typeof import("../state/pullRequests")>("../state/pullRequests");
+  return {
+    ...actual,
+    usePullRequestList: () => ({ data: null, error: null, isPending: false, refresh: vi.fn() }),
+  };
+});
+
+vi.mock("../remoteOpen", async () => {
+  const actual = await vi.importActual<typeof import("../remoteOpen")>("../remoteOpen");
+  return {
+    ...actual,
+    useRemoteOpenState: () => ({ mode: "local-exec" }),
+    useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+  };
+});
+
+vi.mock("../state/projectClones", async () => {
+  const actual =
+    await vi.importActual<typeof import("../state/projectClones")>("../state/projectClones");
+  return { ...actual, useProjectClone: () => null };
+});
 
 vi.mock("../state/environments", () => ({
   useEnvironmentHttpBaseUrl: () => "http://localhost",
@@ -292,7 +423,11 @@ vi.mock("@effect/atom-react", async () => {
   return {
     ...actual,
     useAtomValue: () => ({
-      environment: { serverVersion: "test", capabilities: { pullRequests: false } },
+      environment: {
+        serverVersion: "test",
+        capabilities: { pullRequests: false },
+        platform: { machine: "server" },
+      },
       newWorktreesStartFromOrigin: false,
       shortcuts: {},
       theme: "system",
@@ -300,8 +435,10 @@ vi.mock("@effect/atom-react", async () => {
   };
 });
 
-vi.mock("../hooks/useSettings", () => {
+vi.mock("../hooks/useSettings", async () => {
+  const { DEFAULT_UNIFIED_SETTINGS } = await import("@t3tools/contracts");
   const settings = {
+    ...DEFAULT_UNIFIED_SETTINGS,
     customModels: {},
     disabledProviders: [],
     hiddenModels: {},
@@ -313,12 +450,22 @@ vi.mock("../hooks/useSettings", () => {
     timestampFormat: "locale",
   };
   return {
-    useClientSettings: (selector: (value: typeof settings) => unknown) => selector(settings),
+    useClientSettings: (selector?: (value: typeof settings) => unknown) =>
+      selector ? selector(settings) : settings,
     useClientSettingsHydrated: () => true,
     useEnvironmentIdentificationMode: () => "pill",
     useEnvironmentSettings: () => settings,
   };
 });
+
+vi.mock("../hooks/useLoadBalancedEnvironment", () => ({
+  useLoadBalancedEnvironment: () => ({
+    refresh: vi.fn(),
+    pending: false,
+    environmentId: "env-one",
+    failed: false,
+  }),
+}));
 
 vi.mock("../hooks/useTheme", () => ({
   useTheme: () => ({ resolvedTheme: "light" }),
@@ -379,6 +526,7 @@ vi.mock("../rightPanelStore", async () => {
     byThreadKey: {},
     activeSurfaceIdByThreadKey: {},
     rightPanelStateByThreadKey: {},
+    threadPanelVisibilityByThreadKey: {},
     surfacesByThreadKey: {},
   };
   return {
@@ -427,6 +575,12 @@ vi.mock("../components/DiffWorkerPoolProvider", async () => {
 
 vi.mock("../components/BranchToolbar", () => ({ BranchToolbar: () => null }));
 vi.mock("../components/chat/ChatHeader", () => ({ ChatHeader: () => null }));
+vi.mock("../components/chat/OpenInPickerShortcut", () => ({
+  useOpenFavoriteEditorShortcut: () => undefined,
+}));
+vi.mock("../components/chat/useAutoBalanceUpdateBanner", () => ({
+  useAutoBalanceUpdateBanner: () => null,
+}));
 vi.mock("../components/RightPanelTabs", () => ({ RightPanelTabs: () => null }));
 vi.mock("../components/ThreadTerminalDrawer", () => ({ default: () => null }));
 vi.mock("../components/chat/DraftHeroHeadline", () => ({ DraftHeroHeadline: () => null }));
@@ -441,6 +595,13 @@ vi.mock("../components/preview/ThreadPreviewMiniPlayer", () => ({
 vi.mock("../assets/assetUrls", () => ({ useAssetUrls: () => [] }));
 
 import { getRouter } from "../router";
+import { ThreadRouteView } from "../components/ThreadRouteView";
+import { resolveThreadRouteTarget } from "../threadRoutes";
+
+function ThreadLayout() {
+  const target = useParams({ strict: false, select: resolveThreadRouteTarget });
+  return target ? <ThreadRouteView target={target} /> : <Outlet />;
+}
 
 function createHarness(history: RouterHistory) {
   const router = getRouter(history);
@@ -450,8 +611,12 @@ function createHarness(history: RouterHistory) {
   });
   Object.assign(router.routesById["/_chat"]?.options ?? {}, {
     beforeLoad: () => undefined,
-    component: Outlet,
+    component: ThreadLayout,
   });
+
+  for (const id of ["/_chat/$environmentId/$threadId", "/_chat/draft/$draftId"] as const) {
+    Object.assign(router.routesById[id]?.options ?? {}, { component: ThreadLayout });
+  }
 
   return {
     router,

@@ -95,7 +95,7 @@ describe("VoiceChatPage", () => {
           id: MessageId.make("message-1"),
           role: "user",
           text: "Keep this history",
-          turnId: null,
+          runId: null,
           createdAt: "2026-08-14T00:00:00.000Z",
           updatedAt: "2026-08-14T00:00:00.000Z",
           streaming: false,
