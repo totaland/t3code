@@ -27,6 +27,7 @@ import {
 } from "@t3tools/provider-core/server/textGenerationUtils";
 import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -296,6 +297,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     phoneMode = false,
     codexHomePath,
     attachments,
+    investigate,
   }: Omit<TextGenerationOperations.Request<S>, "operation"> & {
     operation: TextGenerationOperations.Operation | "generatePhoneReply";
     phoneMode?: boolean;
@@ -369,7 +371,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               ...(codexHomePath
                 ? { CODEX_HOME: codexHomePath }
                 : effectiveConfig.homePath
-                  ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath) }
+                  ? {
+                      CODEX_HOME: expandHomePath(
+                        effectiveConfig.homePath,
+                        yield* HostProcess.HomeDirectory,
+                      ),
+                    }
                   : {}),
             };
       const spawnCommand = yield* resolveSpawnCommand(effectiveConfig.binaryPath || "codex", args, {
@@ -426,7 +433,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return yield* Effect.gen(function* () {
       yield* runCodexCommand().pipe(
         Effect.scoped,
-        Effect.timeoutOption(CODEX_TIMEOUT_MS),
+        // The read-only sandbox already holds an investigation to reading; it only needs longer.
+        Effect.timeoutOption(investigate?.timeoutMs ?? CODEX_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -524,7 +532,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         const sourceHome =
           codexConfig.homePath?.trim() ||
           resolvedEnvironment.CODEX_HOME?.trim() ||
-          expandHomePath("~/.codex");
+          expandHomePath("~/.codex", yield* HostProcess.HomeDirectory);
         const sourceAuthPath = path.join(sourceHome, "auth.json");
         const sourceAuthInfo = yield* fileSystem
           .stat(sourceAuthPath)

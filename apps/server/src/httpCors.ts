@@ -17,3 +17,6 @@ export const browserApiCorsHeaders = {
   "access-control-allow-headers": browserApiCorsAllowedHeaders.join(", "),
   "access-control-expose-headers": browserApiCorsExposedHeaders.join(", "),
 } as const;
+
+/** Origins of the Electron renderer, packaged and dev. */
+export const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"] as const;

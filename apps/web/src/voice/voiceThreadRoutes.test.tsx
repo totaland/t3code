@@ -50,7 +50,7 @@ const harness = vi.hoisted(() => {
     title: "Project",
     workspaceRoot: "/workspace",
     scripts: [],
-    defaultModelSelection: { instanceId: "codex", model: "gpt-5", options: {} },
+    defaultModelSelection: { instanceId: "codex", model: "gpt-5", options: [] },
   };
   const draftSession = {
     threadId: "thread-two",
@@ -70,7 +70,7 @@ const harness = vi.hoisted(() => {
     environmentId: "env-one",
     projectId: "project-one",
     title: "Thread",
-    modelSelection: { instanceId: "codex", model: "gpt-5", options: {} },
+    modelSelection: { instanceId: "codex", model: "gpt-5", options: [] },
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,
@@ -366,6 +366,7 @@ vi.mock("../state/entities", async () => {
     useProjects: () => [harness.project],
     useServerConfigs: () => new Map([["env-one", harness.environment.serverConfig]]),
     useThread: () => (harness.serverThreadAvailable ? harness.thread : null),
+    useChildThreadInputs: () => [],
     useThreadDetail: () => (harness.serverThreadAvailable ? harness.thread : null),
     useThreadRefs: () => [{ environmentId: "env-one", threadId: "thread-two" }],
     useThreadShells: () => (harness.serverThreadAvailable ? [shell] : []),
