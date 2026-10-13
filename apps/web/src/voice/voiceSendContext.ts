@@ -58,6 +58,7 @@ export function resolveVoiceSendContext(input: {
   });
 
   return {
+    answeringPendingUserInput: true,
     prompt: "",
     images: [],
     files: [],
