@@ -11,6 +11,7 @@ export interface MuseHost {
   readonly connection: Pick<
     Connection,
     | "command"
+    | "request"
     | "mintCommandId"
     | "onNotification"
     | "onServerRequest"
@@ -108,29 +109,50 @@ interface RawItem {
   text?: string;
   toolName?: string;
   name?: string;
+  /** MSP toolCall fields: the tool name, its JSON arguments, its result text. */
+  tool?: string;
+  args?: string;
+  visibleOutput?: string;
   retracted?: boolean;
   truncated?: boolean;
 }
 
-/** Map an MSP item to an OptChat message. Thoughts are never logged (§1). */
-export function classifyItem(item: RawItem): TurnItem | undefined {
+/**
+ * Map an MSP item to OptChat messages. Thoughts are never logged (§1); the
+ * user message is never logged here (the caller already logged it, and its
+ * MSP copy carries the whole system prompt); reminder children are Muse
+ * internals, not work. A completed toolCall carries both the call and its
+ * result, so it expands to a tool message plus an echo message.
+ */
+export function classifyItems(item: RawItem): TurnItem[] {
   const text = item.text ?? "";
   const kind = item.kind.toLowerCase();
-  if (kind.includes("reason") || kind.includes("thought") || kind.includes("thinking"))
-    return undefined;
+  if (kind.includes("reason") || kind.includes("thought") || kind.includes("thinking")) return [];
+  if (kind.includes("user")) return [];
+  if (kind.includes("reminder")) return [];
   if (kind.includes("subagent") || kind.includes("child") || kind.includes("workflow")) {
-    return text ? { kind: "work", text } : undefined;
+    return text ? [{ kind: "work", text }] : [];
   }
   if (kind.includes("tool") && (kind.includes("result") || kind.includes("output"))) {
-    return { kind: "echo", text };
+    return [{ kind: "echo", text: text || item.visibleOutput || "" }];
   }
   if (kind.includes("tool")) {
-    return { kind: "tool", text: text || `${item.toolName ?? item.name ?? "tool"} {}` };
+    const call =
+      `${item.tool ?? item.toolName ?? item.name ?? "tool"} ${item.args ?? text ?? ""}`.trim();
+    return [
+      { kind: "tool", text: call },
+      ...(item.visibleOutput ? [{ kind: "echo", text: item.visibleOutput } as TurnItem] : []),
+    ];
   }
   if (kind.includes("message") || kind === "agentmessage") {
-    return text && !item.retracted ? { kind: "talk", text } : undefined;
+    return text && !item.retracted ? [{ kind: "talk", text }] : [];
   }
-  return undefined;
+  return [];
+}
+
+/** The first OptChat message an MSP item maps to, if any. */
+export function classifyItem(item: RawItem): TurnItem | undefined {
+  return classifyItems(item)[0];
 }
 
 /**
@@ -170,8 +192,7 @@ export async function runFreshTurn(host: MuseHost, options: FreshTurnOptions): P
         if (!item || params.sessionId !== sessionId || item.turnId !== turnId) return;
         record(item);
         if (notification.method === "item/completed") {
-          const classified = classifyItem(item);
-          if (classified) {
+          for (const classified of classifyItems(item)) {
             items.push(classified);
             options.onItem?.(classified);
           }
@@ -215,6 +236,37 @@ export async function runFreshTurn(host: MuseHost, options: FreshTurnOptions): P
   } finally {
     signal?.removeEventListener("abort", onAbort);
   }
+}
+
+export interface MuseModel {
+  modelId: string;
+  name: string;
+  isDefault: boolean;
+}
+
+/** The host's model catalog (`model/list`), Meta provider entries only. */
+export async function listMuseModels(host: MuseHost): Promise<MuseModel[]> {
+  const result = (await host.connection.request("model/list", {})) as {
+    providerId?: string;
+    models?: Array<{
+      modelId?: string;
+      displayLabel?: string;
+      providerId?: string;
+      isDefault?: boolean;
+    }>;
+  };
+  const seen = new Set<string>();
+  return (result.models ?? []).flatMap((model) => {
+    if (!model.modelId || model.providerId !== "meta" || seen.has(model.modelId)) return [];
+    seen.add(model.modelId);
+    return [
+      {
+        modelId: model.modelId,
+        name: model.displayLabel?.trim() || model.modelId,
+        isDefault: model.isDefault === true,
+      },
+    ];
+  });
 }
 
 /** A compactor `ask`: one fresh read-only session, final message text out (§4). */

@@ -30,18 +30,23 @@ export {
 } from "./memory.ts";
 export {
   createOptChatTools,
+  serveOptChatToolHandlers,
   serveOptChatTools,
   type OptChatMcpServer,
+  type OptChatToolHandlers,
   type OptChatTools,
 } from "./mcp.ts";
 export {
   classifyItem,
+  classifyItems,
   createMuseHost,
+  listMuseModels,
   makeCompactorAsk,
   runFreshTurn,
   type FreshTurnOptions,
   type MuseHost,
   type MuseHostOptions,
+  type MuseModel,
   type TurnItem,
 } from "./muse.ts";
 export {

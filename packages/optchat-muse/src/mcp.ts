@@ -53,9 +53,21 @@ export interface OptChatMcpServer {
   close(): Promise<void>;
 }
 
+/** Async zoom/date handlers, for chats owned by another process (e.g. the Pi hub). */
+export interface OptChatToolHandlers {
+  zoom(args: { id: number; n: number }): Promise<string> | string;
+  date(args: { id: number }): Promise<string> | string;
+}
+
 /** Serve zoom/date for one chat on a loopback port, bearer-token guarded. */
 export async function serveOptChatTools(memory: Memory): Promise<OptChatMcpServer> {
-  const tools = createOptChatTools(memory);
+  return serveOptChatToolHandlers(createOptChatTools(memory));
+}
+
+/** Serve zoom/date from arbitrary handlers on a loopback port, bearer-token guarded. */
+export async function serveOptChatToolHandlers(
+  tools: OptChatToolHandlers,
+): Promise<OptChatMcpServer> {
   const token = randomBytes(24).toString("base64url");
   const server: Server = createServer((req, res) => {
     if (req.method !== "POST") {
@@ -68,7 +80,7 @@ export async function serveOptChatTools(memory: Memory): Promise<OptChatMcpServe
     }
     const chunks: Buffer[] = [];
     req.on("data", (chunk) => chunks.push(chunk as Buffer));
-    req.on("end", () => {
+    req.on("end", async () => {
       let rpc: { id?: unknown; method?: string; params?: Record<string, unknown> };
       try {
         rpc = JSON.parse(Buffer.concat(chunks).toString("utf8")) as typeof rpc;
@@ -101,9 +113,9 @@ export async function serveOptChatTools(memory: Memory): Promise<OptChatMcpServe
           const num = (value: unknown) => (typeof value === "number" ? value : Number(value));
           const text =
             name === "zoom"
-              ? tools.zoom({ id: num(args["id"]), n: num(args["n"]) })
+              ? await tools.zoom({ id: num(args["id"]), n: num(args["n"]) })
               : name === "date"
-                ? tools.date({ id: num(args["id"]) })
+                ? await tools.date({ id: num(args["id"]) })
                 : `Unknown tool ${name}.`;
           return reply({
             content: [{ type: "text", text }],

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { OptChat } from "./driver.ts";
 import { createOptChatTools } from "./mcp.ts";
-import { classifyItem } from "./muse.ts";
+import { classifyItem, classifyItems } from "./muse.ts";
 import type { Ask } from "./memory.ts";
 import type { TurnItem } from "./muse.ts";
 
@@ -123,5 +123,37 @@ describe("OptChat driver (SPEC §6)", () => {
     expect(
       classifyItem({ itemId: "5", kind: "subagentReport", revision: 1, text: "report" })?.kind,
     ).toBe("work");
+  });
+
+  test("the MSP copy of the user message and reminder children are never logged", () => {
+    // A fresh turn echoes the whole prompt back as a userMessage item; the
+    // driver already logged the user's own words (§6).
+    expect(
+      classifyItem({ itemId: "1", kind: "userMessage", revision: 1, text: "whole prompt" }),
+    ).toBeUndefined();
+    expect(
+      classifyItem({
+        itemId: "2",
+        kind: "reminderChild",
+        revision: 1,
+        text: "Reminder child session",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("a completed toolCall expands to its call and its result", () => {
+    expect(
+      classifyItems({
+        itemId: "1",
+        kind: "toolCall",
+        revision: 3,
+        tool: "bash",
+        args: '{"command":"echo hi"}',
+        visibleOutput: "hi\n",
+      }),
+    ).toEqual([
+      { kind: "tool", text: 'bash {"command":"echo hi"}' },
+      { kind: "echo", text: "hi\n" },
+    ]);
   });
 });
