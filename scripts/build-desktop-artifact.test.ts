@@ -671,6 +671,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const macConfig = mac.mac as Record<string, unknown>;
       assert.deepStrictEqual(macConfig.extendInfo, {
         NSMicrophoneUsageDescription: "T3 Code uses the microphone for voice conversations.",
+        NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
         NSLocalNetworkUsageDescription:
           "T3 Code connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
         NSScreenCaptureUsageDescription:
