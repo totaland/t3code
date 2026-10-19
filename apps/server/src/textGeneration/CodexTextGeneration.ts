@@ -46,7 +46,6 @@ const CodexMcpServers = Schema.fromJsonString(
 const decodeCodexMcpServers = Schema.decodeEffect(CodexMcpServers);
 
 /**
- * The `--config` value that turns off each MCP server Codex would start.
  * `mcp_servers={}` merges into the user's servers rather than replacing them,
  * so each is named; quoting the name keeps one with a dot a single key.
  */
@@ -199,10 +198,6 @@ export function racePhoneGenerationWithAbort<A, E, R>(
     ? generation
     : Effect.raceFirst(generation, phoneAbortFailure(signal));
 }
-/**
- * Build a Codex text-generation closure bound to a specific `CodexSettings`
- * payload. See `makeCodexAdapter` for the overall per-instance rationale.
- */
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   codexConfig: CodexSettings,
   environment?: NodeJS.ProcessEnv,
@@ -241,8 +236,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   // Deliberately unscoped: text generation runs from background fibers whose
   // ambient scope may already be closed (a closed scope reaps the temp
-  // directory the moment it is created). Each allocation removes its own
-  // directory on failure; success-path cleanup is explicit in runCodexJson.
+  // directory the moment it is created).
   const writeTempFile = (
     operation: string,
     prefix: string,
@@ -312,10 +306,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return imagePaths;
   });
 
-  /**
-   * The MCP servers Codex would start for this configuration, by name. Text
-   * generation goes ahead with them listed as none if Codex cannot list them.
-   */
   const listEnabledMcpServers = Effect.fn("listEnabledMcpServers")(
     function* (input: {
       readonly binary: string;
@@ -537,7 +527,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return yield* Effect.gen(function* () {
       yield* runCodexCommand().pipe(
         Effect.scoped,
-        // The read-only sandbox already holds an investigation to reading; it only needs longer.
         Effect.timeoutOption(investigate?.timeoutMs ?? CODEX_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({

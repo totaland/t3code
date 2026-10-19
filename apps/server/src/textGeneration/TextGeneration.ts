@@ -10,21 +10,6 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
 
-import type {
-  BranchNameGenerationInput,
-  BranchNameGenerationResult,
-  CommitMessageGenerationInput,
-  CommitMessageGenerationResult,
-  PhoneReplyGenerationInput,
-  PhoneReplyGenerationResult,
-  PrContentGenerationInput,
-  PrContentGenerationResult,
-  ReviewGuideGenerationInput,
-  ReviewGuideGenerationResult,
-  ThreadTitleGenerationInput,
-  ThreadTitleGenerationResult,
-} from "@t3tools/provider-core/server/textGeneration";
-
 export type {
   BranchNameGenerationInput,
   BranchNameGenerationResult,
@@ -35,23 +20,12 @@ export type {
   PhoneReplyGenerationResult,
   PrContentGenerationInput,
   PrContentGenerationResult,
+  ReviewGuideGenerationInput,
+  ReviewGuideGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-export interface TextGenerationService {
-  generateCommitMessage(
-    input: CommitMessageGenerationInput,
-  ): Promise<CommitMessageGenerationResult>;
-  generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
-  generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
-  generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
-  generatePhoneReply?(input: PhoneReplyGenerationInput): Promise<PhoneReplyGenerationResult>;
-}
-
-/**
- * TextGeneration - Service tag for commit and change request text generation.
- */
 export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
   "t3/textGeneration/TextGeneration",
 ) {}

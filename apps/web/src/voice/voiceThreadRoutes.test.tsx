@@ -371,9 +371,11 @@ vi.mock("../state/entities", async () => {
     useThreadRefs: () => [{ environmentId: "env-one", threadId: "thread-two" }],
     useThreadShells: () => (harness.serverThreadAvailable ? [shell] : []),
     useThreadShell: () => (harness.serverThreadAvailable ? shell : null),
+    useQuietThreadShell: () => (harness.serverThreadAvailable ? shell : null),
     resolveThreadDetailRef: (ref: unknown) => ref,
     useThreadProjection: () => (harness.serverThreadAvailable ? { projection } : null),
     useThreadVisibleTurnItems: () => (harness.serverThreadAvailable ? visibleTurnItems : []),
+    useThreadCheckpointSummaries: () => [],
     useThreadHistory: () => ({ hasMoreHistory: false, loading: false, error: null }),
     useThreadStatus: () => "live",
   };
@@ -406,13 +408,14 @@ vi.mock("../state/projectClones", async () => {
 vi.mock("../state/environments", () => ({
   useEnvironmentHttpBaseUrl: () => "http://localhost",
   useEnvironments: () => ({ environments: [harness.environment] }),
+  useEnvironmentProviders: () => new Map([["env-one", harness.environment.serverConfig.providers]]),
   usePrimaryEnvironment: () => harness.environment,
   usePrimaryEnvironmentId: () => "env-one",
 }));
 
 vi.mock("../state/query", () => ({
   useEnvironmentQuery: () => ({
-    data: { snapshot: { _tag: "Some", value: {} } },
+    data: null,
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -420,6 +423,8 @@ vi.mock("../state/query", () => ({
 }));
 
 vi.mock("../state/shell", () => ({
+  useEnvironmentShellStatus: () => "live",
+  useEnvironmentShellHasSnapshot: () => true,
   environmentShell: { stateAtom: () => ({}) },
   environmentSnapshotAtom: {},
   shellEnvironment: new Proxy({}, { get: () => ({}) }),
@@ -439,6 +444,7 @@ vi.mock("@effect/atom-react", async () => {
   return {
     ...actual,
     useAtomValue: () => ({
+      availableEditors: [],
       environment: {
         serverVersion: "test",
         capabilities: { pullRequests: false },
